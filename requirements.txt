@@ -1,0 +1,6 @@
+discord.py
+motor
+python-dotenv
+requests
+dnspython
+coc.py
