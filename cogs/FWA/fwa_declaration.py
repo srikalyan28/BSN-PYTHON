@@ -30,10 +30,10 @@ class FWADeclarationCog(commands.Cog):
             embed = discord.Embed(
                 title=f"🏆 We WIN against {clan_name} 🏆",
                 description=f"**Instructions:**\n"
-                            "✅ **(A)Attack On Your Mirror For 3**\n"
+                            "✅ **(A)Attack On Your Mirror For 3 stars\n**"
                             "✅ (B)Attack On Base 1 For 1 Star(After Our Number 1 Has Taken Its Mirror\n"
                             "✅ Last 12 Hours, All Bases Will Be Open For 3 Stars\n"
-                            "✅ Don’t Fill CC And 150⭐️\n",
+                            "✅ Don’t Fill CC And 150⭐️fwa_declaration",
                 color=discord.Color.green()
             )
             embed.set_footer(text=f"War WIN declared by {interaction.user.display_name} 🟢")
@@ -41,8 +41,8 @@ class FWADeclarationCog(commands.Cog):
             embed = discord.Embed(
                 title=f"⚠️ We LOSE against {clan_name} ⚠️",
                 description=f"**Instructions:**\n"
-                            "🛑 **(A)Attack On Your Mirror For 2 Star\n**"
-                            "🛑 **(B)Attack On Base 1 For 1 Star(After Our Number 1 Has Taken Its Mirrior\n"
+                            "🛑 **(A)Attack On Your Mirror For 2 Stars\n**"
+                            "🛑 **(B)Attack On Base 1 For 1 Star(After Our Number 1 Has Taken Its Mirrior\n**"
                             "🛑 Last 12 Hours, All Bases Will Be Open For 2 Stars.\n"
                             "🛑 Don’t Fill CC And 100⭐️",
                 color=discord.Color.red()
