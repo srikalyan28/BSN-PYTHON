@@ -303,7 +303,11 @@ class QuestionDoneView(discord.ui.View):
             if msg.author.id == interaction.user.id:
                 messages.append(msg.content)
         
-        answer = "\n".join(messages) if messages else "No answer provided."
+        if not messages:
+            await interaction.response.send_message("❌ You must provide an answer before clicking Done!", ephemeral=True)
+            return
+
+        answer = "\n".join(messages)
         self.session_data["answers"].append({"question": self.questions[self.index], "answer": answer})
         
         await interaction.response.edit_message(view=None) # Remove button

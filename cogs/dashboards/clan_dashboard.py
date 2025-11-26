@@ -342,6 +342,10 @@ class ClanDashboardCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def cog_load(self):
+        print("Clan Dashboard Cog Loaded")
+        self.bot.add_view(ClanDashboardView())
+
     @app_commands.command(name="clandashboard", description="Open the Clan Dashboard")
     async def clandashboard(self, interaction: discord.Interaction):
         if interaction.user.id != int(os.getenv("OWNER_ID")):

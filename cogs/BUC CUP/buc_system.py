@@ -12,6 +12,10 @@ class BUCSystem(commands.Cog):
 
     async def cog_load(self):
         print("BUC System Cog Loaded")
+        self.bot.add_view(RegistrationView())
+        self.bot.add_view(DashboardView())
+        self.bot.add_view(ManageTeamsView())
+        self.bot.add_view(ManageMatchesView())
 
     async def ensure_team_player_names(self, team):
         """Helper to ensure all players in a team have names fetched."""
@@ -563,15 +567,15 @@ class DashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Manage Teams", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Manage Teams", style=discord.ButtonStyle.primary, custom_id="buc_manage_teams")
     async def manage_teams(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Select an action:", view=ManageTeamsView(), ephemeral=True)
 
-    @discord.ui.button(label="Manage Matches", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Manage Matches", style=discord.ButtonStyle.secondary, custom_id="buc_manage_matches")
     async def manage_matches(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Select an action:", view=ManageMatchesView(), ephemeral=True)
 
-    @discord.ui.button(label="Reset Tournament", style=discord.ButtonStyle.danger, row=2)
+    @discord.ui.button(label="Reset Tournament", style=discord.ButtonStyle.danger, row=2, custom_id="buc_reset_tournament")
     async def reset_tournament(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Confirmation
         view = ConfirmResetView()
@@ -606,7 +610,7 @@ class ManageTeamsView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Remove Team", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Remove Team", style=discord.ButtonStyle.danger, custom_id="buc_remove_team")
     async def remove_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         teams = await mongo_manager.get_buc_teams()
         if not teams:
@@ -629,7 +633,7 @@ class ManageTeamsView(discord.ui.View):
         view.add_item(select)
         await interaction.response.send_message("Select team:", view=view, ephemeral=True)
 
-    @discord.ui.button(label="Edit Team", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Edit Team", style=discord.ButtonStyle.secondary, custom_id="buc_edit_team")
     async def edit_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         teams = await mongo_manager.get_buc_teams()
         if not teams:
@@ -704,7 +708,7 @@ class ManageMatchesView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Generate Round 1 Schedule", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Generate Round 1 Schedule", style=discord.ButtonStyle.primary, custom_id="buc_generate_r1")
     async def generate_r1(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         
@@ -777,7 +781,7 @@ class ManageMatchesView(discord.ui.View):
         
         await interaction.followup.send(f"Generated {len(generated_matches)} matches for Round 1 (7 Days).", ephemeral=True)
 
-    @discord.ui.button(label="Enter Match Result", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Enter Match Result", style=discord.ButtonStyle.success, custom_id="buc_enter_result")
     async def enter_result(self, interaction: discord.Interaction, button: discord.ui.Button):
         matches = await mongo_manager.get_buc_matches()
         incomplete = [m for m in matches if not m.get("completed")]
