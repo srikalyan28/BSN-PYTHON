@@ -324,7 +324,7 @@ class BUCSystem(commands.Cog):
     async def buc_dashboard(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🛠️ BUC Cup Admin Dashboard", color=discord.Color.dark_grey())
         view = DashboardView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
 
     @app_commands.command(name="buc_leaderboard", description="Post the Auto-Updating Leaderboard")
     @is_owner()
@@ -352,19 +352,7 @@ class BUCSystem(commands.Cog):
 
     @app_commands.command(name="buc_matchups", description="Show Matchups Schedule")
     async def buc_matchups(self, interaction: discord.Interaction):
-        # Public command, no restriction needed? User said "dont let anyone use commands other than me".
-        # But matchups is usually public.
-        # "i will generate dashboards so staff can use . make admin dashboard also for everyone to view ."
-        # Wait, "make admin dashboard also for everyone to view" conflicts with "dont let anyone use commands other than me".
-        # Assuming they mean the OUTPUT of dashboard (leaderboard/bracket) is for everyone.
-        # But the COMMANDS to manage it are for them.
-        # Matchups is a display command.
-        # Let's restrict it too if they said "commands other than me".
-        # But usually users need to see matchups.
-        # "dont let anyone use commands other than me" -> I will restrict ALL commands.
-        if interaction.user.id != 1272176835769405552:
-             await interaction.response.send_message("❌ You are not authorized to use this command.", ephemeral=True)
-             return
+        # Public command
 
         matches = await mongo_manager.get_buc_matches()
         if not matches:
@@ -457,10 +445,7 @@ class BUCSystem(commands.Cog):
 
     @app_commands.command(name="buc_teams", description="View Registered Teams and Rosters")
     async def buc_teams(self, interaction: discord.Interaction):
-        # Also restrict? "dont let anyone use commands other than me"
-        if interaction.user.id != 1272176835769405552:
-             await interaction.response.send_message("❌ You are not authorized to use this command.", ephemeral=True)
-             return
+        # Public command
              
         teams = await mongo_manager.get_buc_teams()
         if not teams:
@@ -577,6 +562,10 @@ class DashboardView(discord.ui.View):
 
     @discord.ui.button(label="Reset Tournament", style=discord.ButtonStyle.danger, row=2, custom_id="buc_reset_tournament")
     async def reset_tournament(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != 1272176835769405552:
+            await interaction.response.send_message("❌ Only the Owner can reset the tournament.", ephemeral=True)
+            return
+            
         # Confirmation
         view = ConfirmResetView()
         await interaction.response.send_message("⚠️ **ARE YOU SURE?**\nThis will delete ALL matches and reset the tournament. Teams will remain.", view=view, ephemeral=True)
