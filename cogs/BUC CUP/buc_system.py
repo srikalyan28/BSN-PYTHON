@@ -16,6 +16,8 @@ class BUCSystem(commands.Cog):
         self.bot.add_view(DashboardView())
         self.bot.add_view(ManageTeamsView())
         self.bot.add_view(ManageMatchesView())
+        self.bot.add_view(MatchupsView())
+        self.bot.add_view(TeamListView())
 
     async def ensure_team_player_names(self, team):
         """Helper to ensure all players in a team have names fetched."""
@@ -371,64 +373,13 @@ class BUCSystem(commands.Cog):
         sorted_days = sorted(matches_by_day.keys(), key=lambda x: int(x) if isinstance(x, int) else 999)
         pages = [matches_by_day[d] for d in sorted_days]
         
-        class MatchupsPaginator(discord.ui.View):
-            def __init__(self, pages, days):
-                super().__init__(timeout=600)
-                self.pages = pages
-                self.days = days
-                self.current_page = 0
-
-            async def update_embed(self, interaction):
-                chunk = self.pages[self.current_page]
-                day_num = self.days[self.current_page]
-                
-                embed = discord.Embed(title=f"📅 BUC CUP Matchups - Day {day_num}", color=discord.Color.orange())
-                
-                desc = ""
-                for m in chunk:
-                    status = "✅" if m["completed"] else "📅"
-                    date = m.get("date", "TBD")
-                    winner = f" (🏆 {m['winner']})" if m["winner"] else ""
-                    label = m.get("label") or m["id"]
-                    desc += f"`{label}` {status} **{m['team1']}** 🆚 **{m['team2']}**\n   🕒 {date}{winner}\n\n"
-                
-                embed.description = desc
-                embed.set_footer(text=f"Page {self.current_page + 1}/{len(self.pages)}")
-                await interaction.response.edit_message(embed=embed, view=self)
-
-            @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.primary)
-            async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-                if self.current_page > 0:
-                    self.current_page -= 1
-                    await self.update_embed(interaction)
-                else:
-                    await interaction.response.defer()
-
-            @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.primary)
-            async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-                if self.current_page < len(self.pages) - 1:
-                    self.current_page += 1
-                    await self.update_embed(interaction)
-                else:
-                    await interaction.response.defer()
-
         if not pages:
              await interaction.response.send_message("No matches found.", ephemeral=True)
              return
 
-        view = MatchupsPaginator(pages, sorted_days)
-        # Initial Embed
-        embed = discord.Embed(title=f"📅 BUC CUP Matchups - Day {sorted_days[0]}", color=discord.Color.orange())
-        desc = ""
-        for m in pages[0]:
-            status = "✅" if m["completed"] else "📅"
-            date = m.get("date", "TBD")
-            winner = f" (🏆 {m['winner']})" if m["winner"] else ""
-            label = m.get("label") or m["id"]
-            desc += f"`{label}` {status} **{m['team1']}** 🆚 **{m['team2']}**\n   🕒 {date}{winner}\n\n"
-        embed.description = desc
-        embed.set_footer(text=f"Page 1/{len(pages)}")
-        
+        view = MatchupsView()
+        # Initial Embed (Page 1)
+        embed = await view.get_embed(pages, sorted_days, 0)
         await interaction.response.send_message(embed=embed, view=view)
 
     @app_commands.command(name="buc_player_stats", description="Post the Player Stats Leaderboard")
@@ -453,34 +404,19 @@ class BUCSystem(commands.Cog):
             return
 
         options = [discord.SelectOption(label=t["name"], value=t["name"]) for t in teams]
-        view = discord.ui.View()
-        select = discord.ui.Select(placeholder="Select a Team to view roster", options=options[:25])
+        view = TeamListView()
+        # We need to populate the select menu dynamically?
+        # Persistent views must have static items usually, or we update them.
+        # But for Team List, teams change.
+        # So we should update the view's item before sending.
+        # BUT, if we update the item, the custom_id remains same.
+        # The persistent view callback will handle it.
+        # Wait, if we instantiate TeamListView(), it has the default items defined in class.
+        # We need to update the options of the select menu in the instance.
         
-        async def callback(inter: discord.Interaction):
-            team_name = select.values[0]
-            team = next((t for t in teams if t["name"] == team_name), None)
-            if team:
-                # Lazy fetch names if needed
-                team = await self.ensure_team_player_names(team)
-                
-                embed = discord.Embed(title=f"🛡️ Team {team['name']}", color=discord.Color.blue())
-                # Captain: Name (Tag) - No Discord ID
-                embed.add_field(name="Captain", value=f"{team.get('captain_name', 'Unknown')} ({team['captain_tag']})", inline=False)
-                
-                players_list = []
-                for p in team['players']:
-                    if isinstance(p, str):
-                        # Should be handled by ensure_team_player_names, but just in case
-                        players_list.append(f"{p}")
-                    else:
-                        players_list.append(f"**{p['name']}** ({p['tag']})")
-                
-                players_str = "\n".join(players_list)
-                embed.add_field(name="Players", value=players_str, inline=False)
-                await inter.response.send_message(embed=embed, ephemeral=True)
-
-        select.callback = callback
-        view.add_item(select)
+        # Find the select item
+        select = [x for x in view.children if isinstance(x, discord.ui.Select)][0]
+        select.options = options[:25]
         
         embed = discord.Embed(title="🛡️ Registered Teams", description=f"Total Teams: {len(teams)}\nSelect a team below to view full roster.", color=discord.Color.blue())
         await interaction.response.send_message(embed=embed, view=view)
@@ -1198,6 +1134,117 @@ class DayDateModal(discord.ui.Modal):
         except Exception as e:
             print(f"Error in DayDateModal: {e}")
             await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+class MatchupsView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def get_data(self):
+        matches = await mongo_manager.get_buc_matches()
+        matches_by_day = {}
+        for m in matches:
+            day = m.get("day", "Unknown")
+            if day not in matches_by_day: matches_by_day[day] = []
+            matches_by_day[day].append(m)
+        
+        sorted_days = sorted(matches_by_day.keys(), key=lambda x: int(x) if isinstance(x, int) else 999)
+        pages = [matches_by_day[d] for d in sorted_days]
+        return pages, sorted_days
+
+    async def get_embed(self, pages, days, page_idx):
+        if not pages: return discord.Embed(title="No Matches")
+        
+        chunk = pages[page_idx]
+        day_num = days[page_idx]
+        
+        embed = discord.Embed(title=f"📅 BUC CUP Matchups - Day {day_num}", color=discord.Color.orange())
+        desc = ""
+        for m in chunk:
+            status = "✅" if m["completed"] else "📅"
+            date = m.get("date", "TBD")
+            winner = f" (🏆 {m['winner']})" if m["winner"] else ""
+            label = m.get("label") or m["id"]
+            desc += f"`{label}` {status} **{m['team1']}** 🆚 **{m['team2']}**\n   🕒 {date}{winner}\n\n"
+        
+        embed.description = desc
+        embed.set_footer(text=f"Page {page_idx + 1}/{len(pages)}")
+        return embed
+
+    @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.primary, custom_id="buc_matchups_prev")
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Determine current page from embed footer
+        if not interaction.message.embeds: return
+        footer = interaction.message.embeds[0].footer.text
+        # "Page X/Y"
+        try:
+            current = int(footer.split(" ")[1].split("/")[0]) - 1
+        except:
+            current = 0
+            
+        if current > 0:
+            pages, days = await self.get_data()
+            new_page = current - 1
+            embed = await self.get_embed(pages, days, new_page)
+            await interaction.response.edit_message(embed=embed)
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.primary, custom_id="buc_matchups_next")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.message.embeds: return
+        footer = interaction.message.embeds[0].footer.text
+        try:
+            parts = footer.split(" ")[1].split("/")
+            current = int(parts[0]) - 1
+            total = int(parts[1])
+        except:
+            current = 0
+            total = 1
+            
+        if current < total - 1:
+            pages, days = await self.get_data()
+            new_page = current + 1
+            embed = await self.get_embed(pages, days, new_page)
+            await interaction.response.edit_message(embed=embed)
+        else:
+            await interaction.response.defer()
+
+class TeamListView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.select(placeholder="Select a Team to view roster", custom_id="buc_team_select", min_values=1, max_values=1, options=[discord.SelectOption(label="Loading...", value="loading")])
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        team_name = select.values[0]
+        if team_name == "loading":
+            await interaction.response.send_message("Please wait for the menu to load properly or run command again.", ephemeral=True)
+            return
+
+        teams = await mongo_manager.get_buc_teams()
+        team = next((t for t in teams if t["name"] == team_name), None)
+        
+        if team:
+            # We need to access Cog for ensure_team_player_names
+            # We can get it via client
+            cog = interaction.client.get_cog("BUCSystem")
+            if cog:
+                team = await cog.ensure_team_player_names(team)
+            
+            embed = discord.Embed(title=f"🛡️ Team {team['name']}", color=discord.Color.blue())
+            embed.add_field(name="Captain", value=f"{team.get('captain_name', 'Unknown')} ({team['captain_tag']})", inline=False)
+            
+            players_list = []
+            for p in team['players']:
+                if isinstance(p, str):
+                    players_list.append(f"{p}")
+                else:
+                    players_list.append(f"**{p['name']}** ({p['tag']})")
+            
+            players_str = "\n".join(players_list)
+            embed.add_field(name="Players", value=players_str, inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message("Team not found.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(BUCSystem(bot))
