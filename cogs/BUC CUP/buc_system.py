@@ -777,7 +777,18 @@ class ManageMatchesView(discord.ui.View):
 
     @discord.ui.button(label="Start Round 2 (Page Playoff)", style=discord.ButtonStyle.danger, custom_id="buc_start_r2")
     async def start_r2(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Check if R1 complete? Not strictly necessary, but good practice.
+        # Check if R1 complete
+        matches = await mongo_manager.get_buc_matches()
+        r1_matches = [m for m in matches if m["round"] == 1]
+        
+        if not r1_matches:
+             await interaction.response.send_message("No Round 1 matches found.", ephemeral=True)
+             return
+
+        if not all(m.get("completed") for m in r1_matches):
+             await interaction.response.send_message("❌ Cannot start Round 2 until ALL Round 1 matches are completed and results entered.", ephemeral=True)
+             return
+
         # Get Top 4
         teams = await mongo_manager.get_buc_teams()
         # We need to sort them exactly as the leaderboard does.

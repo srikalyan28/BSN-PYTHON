@@ -180,4 +180,94 @@ class MongoManager:
         collection = self.db["buc_settings"]
         return await collection.find_one({"type": "general"})
 
+    async def save_bsn_team(self, team_data):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_teams"]
+        await collection.update_one(
+            {"name": team_data["name"]},
+            {"$set": team_data},
+            upsert=True
+        )
+
+    async def get_bsn_teams(self):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_teams"]
+        cursor = collection.find({})
+        teams = []
+        async for team in cursor:
+            teams.append(team)
+        return teams
+
+    async def delete_bsn_team(self, team_name):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_teams"]
+        await collection.delete_one({"name": team_name})
+
+    async def save_bsn_pending_team(self, team_data):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_pending_teams"]
+        await collection.update_one(
+            {"name": team_data["name"]},
+            {"$set": team_data},
+            upsert=True
+        )
+
+    async def get_bsn_pending_team(self, team_name):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_pending_teams"]
+        return await collection.find_one({"name": team_name})
+
+    async def delete_bsn_pending_team(self, team_name):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_pending_teams"]
+        await collection.delete_one({"name": team_name})
+
+    async def save_bsn_match(self, match_data):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_matches"]
+        await collection.update_one(
+            {"id": match_data["id"]},
+            {"$set": match_data},
+            upsert=True
+        )
+
+    async def get_bsn_matches(self):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_matches"]
+        cursor = collection.find({})
+        matches = []
+        async for match in cursor:
+            matches.append(match)
+        return matches
+
+    async def delete_bsn_match(self, match_id):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_matches"]
+        await collection.delete_one({"id": match_id})
+
+    async def save_bsn_settings(self, settings):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_settings"]
+        await collection.update_one(
+            {"type": "general"},
+            {"$set": settings},
+            upsert=True
+        )
+
+    async def get_bsn_settings(self):
+        if self.db is None:
+            await self.connect()
+        collection = self.db["bsn_settings"]
+        return await collection.find_one({"type": "general"})
+
 mongo_manager = MongoManager()
