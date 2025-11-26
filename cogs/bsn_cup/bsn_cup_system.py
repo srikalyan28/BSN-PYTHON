@@ -20,15 +20,16 @@ class BSNCupSystem(commands.Cog):
         self.bot.add_view(BSNManageMatchesView())
         self.bot.add_view(BSNMatchupsView())
 
-    # --- Commands ---
+# --- Helper Decorator ---
+def is_owner():
+    async def predicate(interaction: discord.Interaction):
+        if interaction.user.id != 1272176835769405552:
+            await interaction.response.send_message("❌ You are not authorized to use this command.", ephemeral=True)
+            return False
+        return True
+    return app_commands.check(predicate)
 
-    def is_owner():
-        async def predicate(interaction: discord.Interaction):
-            if interaction.user.id != 1272176835769405552:
-                await interaction.response.send_message("❌ You are not authorized to use this command.", ephemeral=True)
-                return False
-            return True
-        return app_commands.check(predicate)
+    # --- Commands ---
 
     @app_commands.command(name="bsn_panel", description="Drop the BSN Cup Registration Panel")
     @is_owner()
