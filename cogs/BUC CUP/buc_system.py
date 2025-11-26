@@ -815,7 +815,7 @@ class ManageMatchesView(discord.ui.View):
         view.add_item(select)
         await interaction.response.send_message("Select match to enter result:", view=view, ephemeral=True)
 
-    @discord.ui.button(label="Edit Match Result", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Edit Match Result", style=discord.ButtonStyle.secondary, custom_id="buc_edit_result")
     async def edit_result(self, interaction: discord.Interaction, button: discord.ui.Button):
         matches = await mongo_manager.get_buc_matches()
         completed = [m for m in matches if m.get("completed")]
@@ -845,12 +845,12 @@ class ManageMatchesView(discord.ui.View):
     # Removed Set Match Date button as per user request
 
 
-    @discord.ui.button(label="Set Day Date (Bulk)", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Set Day Date (Bulk)", style=discord.ButtonStyle.secondary, custom_id="buc_set_day_date")
     async def set_day_date(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Ask for Day Number
         await interaction.response.send_modal(DayDateModal())
 
-    @discord.ui.button(label="Start Round 2 (Page Playoff)", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Start Round 2 (Page Playoff)", style=discord.ButtonStyle.danger, custom_id="buc_start_r2")
     async def start_r2(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Check if R1 complete? Not strictly necessary, but good practice.
         # Get Top 4
