@@ -31,6 +31,10 @@ def is_owner():
 
     # --- Commands ---
 
+    @app_commands.command(name="bsn_ping", description="Test command to check visibility")
+    async def bsn_ping(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Pong! BSN Cup system is loaded.", ephemeral=True)
+
     @app_commands.command(name="bsn_panel", description="Drop the BSN Cup Registration Panel")
     @is_owner()
     async def bsn_panel(self, interaction: discord.Interaction):
