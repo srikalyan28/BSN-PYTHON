@@ -15,70 +15,7 @@ def is_owner():
         return True
     return app_commands.check(predicate)
 
-class BSNCupSystem(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
-    async def cog_load(self):
-        print("BSN Cup System Cog Loaded")
-        self.bot.add_view(BSNRegistrationView())
-        self.bot.add_view(BSNApprovalView())
-        self.bot.add_view(BSNDashboardView())
-        self.bot.add_view(BSNManageTeamsView())
-        self.bot.add_view(BSNTeamListView())
-        self.bot.add_view(BSNManageMatchesView())
-        self.bot.add_view(BSNMatchupsView())
-
-
-
-    # --- Commands ---
-
-    @app_commands.command(name="bsn_ping", description="Test command to check visibility")
-    async def bsn_ping(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Pong! BSN Cup system is loaded.", ephemeral=True)
-
-    @app_commands.command(name="bsn_panel", description="Drop the BSN Cup Registration Panel")
-    @is_owner()
-    async def bsn_panel(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="🏆 BSN CUP Season 3: Pick & Ban Edition",
-            description="**Registration is OPEN!**\n\n"
-                        "**Requirements:**\n"
-                        "- Team Name\n"
-                        "- Captain Tag (Must be one of the 3 players)\n"
-                        "- 1x TH18 Player\n"
-                        "- 1x TH17 Player\n"
-                        "- 1x TH16 Player\n\n"
-                        "Click the button below to apply!",
-            color=discord.Color.gold()
-        )
-        embed.set_image(url="https://i.imgur.com/placeholder.png") # Placeholder or user provided image?
-        view = BSNRegistrationView()
-        await interaction.response.send_message(embed=embed, view=view)
-
-    @app_commands.command(name="bsn_dashboard", description="Admin Dashboard for BSN Cup")
-    @is_owner()
-    async def bsn_dashboard(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="🛠️ BSN Cup Admin Dashboard", color=discord.Color.dark_grey())
-        view = BSNDashboardView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
-
-    @app_commands.command(name="bsn_teams", description="View Registered Teams and Rosters")
-    async def bsn_teams(self, interaction: discord.Interaction):
-        teams = await mongo_manager.get_bsn_teams()
-        if not teams:
-            await interaction.response.send_message("No teams registered yet.", ephemeral=True)
-            return
-
-        options = [discord.SelectOption(label=t["name"], value=t["name"]) for t in teams]
-        view = BSNTeamListView()
-        
-        # Populate select
-        select = [x for x in view.children if isinstance(x, discord.ui.Select)][0]
-        select.options = options[:25]
-        
-        embed = discord.Embed(title="🛡️ Registered Teams", description=f"Total Teams: {len(teams)}\nSelect a team below to view full roster.", color=discord.Color.blue())
-        await interaction.response.send_message(embed=embed, view=view)
+# --- Views and Modals ---
 
 class BSNRegistrationView(discord.ui.View):
     def __init__(self):
@@ -120,9 +57,6 @@ class BSNRegistrationModal(discord.ui.Modal, title="BSN Cup Registration"):
                 await interaction.followup.send(f"❌ Invalid Player Tag: {tag}", ephemeral=True)
                 return
             
-            # Strict TH Check? "Input 3 = TH18..."
-            # User said "have 3 different options of Th18 , Th17 and Th16 and take tag only if it matches the town hall"
-            # Assuming strict match.
             if player.town_hall != required_th:
                 await interaction.followup.send(f"❌ Player {player.name} ({tag}) is TH{player.town_hall}, but must be TH{required_th}.", ephemeral=True)
                 return
@@ -183,30 +117,15 @@ class BSNApprovalView(discord.ui.View):
         self.team_name = team_name
         self.applicant_id = applicant_id
 
-    # We need to persist state. Since persistent views can't have dynamic state easily without custom_id hacking,
-    # we will encode the team name in the custom_id.
-    # Format: bsn_approve_TEAMNAME, bsn_reject_TEAMNAME
-    # BUT team names can be long/weird.
-    # Better to use the interaction to fetch the pending team from the embed or DB?
-    # If we use dynamic custom_id, we need to handle it in `on_interaction` or similar, or just re-create view.
-    # For simplicity in this "one-file" approach, let's use a standard custom_id prefix and parse it.
-    
-    # Actually, the `add_view` in `cog_load` expects a class.
-    # If we use dynamic custom_ids, we need to register the handler differently or use a listener.
-    # OR we can just use `bsn_approve` and `bsn_reject` and find the team name from the Embed fields?
-    # Yes, parsing embed is easier for stateless persistence.
-    
     @discord.ui.button(label="Accept", style=discord.ButtonStyle.green, custom_id="bsn_approve_btn")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Parse Team Name from Embed
         if not interaction.message.embeds:
             await interaction.response.send_message("❌ Error: No embed found.", ephemeral=True)
             return
         
         embed = interaction.message.embeds[0]
-        # Team Name is Field 0
         team_name = embed.fields[0].value
-        applicant_field = embed.fields[3].value # <@ID>
+        applicant_field = embed.fields[3].value
         applicant_id = int(applicant_field.replace("<@", "").replace(">", ""))
         
         pending_team = await mongo_manager.get_bsn_pending_team(team_name)
@@ -214,19 +133,16 @@ class BSNApprovalView(discord.ui.View):
             await interaction.response.send_message(f"❌ Team **{team_name}** not found in pending list (maybe already processed?).", ephemeral=True)
             return
 
-        # Move to Active
         pending_team["status"] = "active"
         await mongo_manager.save_bsn_team(pending_team)
         await mongo_manager.delete_bsn_pending_team(team_name)
         
-        # Disable Buttons
         for child in self.children:
             child.disabled = True
         await interaction.message.edit(view=self)
         
         await interaction.response.send_message(f"✅ Team **{team_name}** Approved!", ephemeral=True)
         
-        # DM User
         try:
             user = await interaction.client.fetch_user(applicant_id)
             if user:
@@ -259,7 +175,6 @@ class BSNRejectModal(discord.ui.Modal):
         
         await mongo_manager.delete_bsn_pending_team(self.team_name)
         
-        # Disable Buttons on original message
         view = BSNApprovalView()
         for child in view.children:
             child.disabled = True
@@ -267,7 +182,6 @@ class BSNRejectModal(discord.ui.Modal):
         
         await interaction.followup.send(f"❌ Team **{self.team_name}** Rejected.", ephemeral=True)
         
-        # DM User
         try:
             user = await interaction.client.fetch_user(self.applicant_id)
             if user:
@@ -293,7 +207,6 @@ class BSNDashboardView(discord.ui.View):
             await interaction.response.send_message("❌ Only the Owner can reset the tournament.", ephemeral=True)
             return
         
-        # Confirmation
         view = BSNConfirmResetView()
         await interaction.response.send_message("⚠️ **ARE YOU SURE?**\nThis will delete ALL matches and reset the tournament. Teams will remain.", view=view, ephemeral=True)
 
@@ -309,7 +222,6 @@ class BSNConfirmResetView(discord.ui.View):
             await mongo_manager.delete_bsn_match(m["id"])
         
         await interaction.followup.send("✅ Tournament Reset! All matches deleted.", ephemeral=True)
-        # TODO: Trigger leaderboard updates to clear them
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -365,7 +277,6 @@ class BSNEditTeamModal(discord.ui.Modal):
         self.team_data = team_data
         self.team_name = discord.ui.TextInput(label="Team Name", default=team_data["name"])
         
-        # Extract tags
         th18 = next((p["tag"] for p in team_data["players"] if p.get("th") == 18), "")
         th17 = next((p["tag"] for p in team_data["players"] if p.get("th") == 17), "")
         th16 = next((p["tag"] for p in team_data["players"] if p.get("th") == 16), "")
@@ -387,7 +298,6 @@ class BSNEditTeamModal(discord.ui.Modal):
         th17 = self.th17_tag.value.strip().upper()
         th16 = self.th16_tag.value.strip().upper()
         
-        # Validate
         tags_to_check = [(th18, 18), (th17, 17), (th16, 16)]
         players_data = []
         
@@ -401,21 +311,16 @@ class BSNEditTeamModal(discord.ui.Modal):
                 return
             players_data.append({"tag": player.tag, "name": player.name, "th": player.town_hall})
             
-        # Update
         if new_name != self.team_data["name"]:
             await mongo_manager.delete_bsn_team(self.team_data["name"])
             
         self.team_data["name"] = new_name
         self.team_data["players"] = players_data
-        # Keep captain same or reset? 
-        # Captain tag might have changed if they swapped the player.
-        # Check if old captain tag is still in new players.
-        # If not, default to TH18 player as captain? Or ask?
-        # Let's just keep old captain tag if present, else set to TH18 player.
+        
         old_cap = self.team_data.get("captain_tag")
         new_tags = [p["tag"] for p in players_data]
         if old_cap not in new_tags:
-            self.team_data["captain_tag"] = players_data[0]["tag"] # TH18
+            self.team_data["captain_tag"] = players_data[0]["tag"]
             self.team_data["captain_name"] = players_data[0]["name"]
         
         await mongo_manager.save_bsn_team(self.team_data)
@@ -452,7 +357,6 @@ class BSNManageMatchesView(discord.ui.View):
     @discord.ui.button(label="Generate Round 1 (Random)", style=discord.ButtonStyle.primary, custom_id="bsn_gen_r1")
     async def gen_r1(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
-        # Check existing
         matches = await mongo_manager.get_bsn_matches()
         if any(m["round"] == 1 for m in matches):
             await interaction.followup.send("❌ Round 1 matches already exist.", ephemeral=True)
@@ -466,9 +370,8 @@ class BSNManageMatchesView(discord.ui.View):
         random.shuffle(teams)
         
         generated = []
-        # Pair up
         for i in range(0, len(teams), 2):
-            if i + 1 >= len(teams): break # Odd number, last one bye?
+            if i + 1 >= len(teams): break
             t1 = teams[i]
             t2 = teams[i+1]
             
@@ -502,7 +405,6 @@ class BSNManageMatchesView(discord.ui.View):
              await interaction.followup.send("❌ Not enough winners to generate Round 2.", ephemeral=True)
              return
              
-        # Pair winners
         generated = []
         for i in range(0, len(winners), 2):
             if i + 1 >= len(winners): break
@@ -535,19 +437,11 @@ class BSNManageMatchesView(discord.ui.View):
             return
 
         winners = [m["winner"] for m in r2_matches if m["winner"]]
-        losers = [] 
-        # Wait, user said "Round 3 will be double elimination. lets say we have 4 teams A , B , C ,D . and we did A vs B and C vs D . WINNERS ARE a AND C . a & c will go to winners bracket , b AND d WILL GO TO LOSERS BRACKET"
-        # This implies Round 3 IS the start of Double Elim for the 4 winners of Round 2.
-        # So we take the 4 winners of Round 2.
         
         if len(winners) != 4:
             await interaction.followup.send(f"❌ Need exactly 4 winners from Round 2 to start Double Elim (Found {len(winners)}).", ephemeral=True)
             return
             
-        # Create Initial Double Elim Matches (Upper Bracket Semi-Finals)
-        # Match 1: W1 vs W2
-        # Match 2: W3 vs W4
-        
         m1 = {
             "id": "DE_UB_SF1",
             "label": "Upper Bracket Semi 1",
@@ -626,25 +520,19 @@ class BSNResultModal(discord.ui.Modal):
         
         await mongo_manager.save_bsn_match(self.match_data)
         
-        # Handle Double Elim Progression
         if self.match_data.get("round") == 3:
             await self.handle_double_elim_progression(self.match_data)
             
         await interaction.followup.send(f"✅ Result saved! Winner: {winner_name}", ephemeral=True)
 
     async def handle_double_elim_progression(self, match):
-        # Logic for DE progression
-        # IDs: DE_UB_SF1, DE_UB_SF2 -> Winners go to DE_UB_F, Losers go to DE_LB_R1
-        
         matches = await mongo_manager.get_bsn_matches()
         
         if match["id"] in ["DE_UB_SF1", "DE_UB_SF2"]:
-            # Check if both SFs are done
             sf1 = next((m for m in matches if m["id"] == "DE_UB_SF1"), None)
             sf2 = next((m for m in matches if m["id"] == "DE_UB_SF2"), None)
             
             if sf1 and sf1["completed"] and sf2 and sf2["completed"]:
-                # Create UB Final and LB R1
                 ub_final = {
                     "id": "DE_UB_F",
                     "label": "Upper Bracket Final",
@@ -674,17 +562,8 @@ class BSNResultModal(discord.ui.Modal):
                 await mongo_manager.save_bsn_match(lb_r1)
         
         elif match["id"] == "DE_LB_R1":
-            # Winner goes to LB Final (Semi-Final in user terms)
-            # Loser Eliminated
-            # Wait, user said: "WINNER GOES TO SEMI FINALS AND LOSERS IS ELIMIINATED"
-            # "Winner between A & c (UB Final) WILL GO TO FINALS , LOSER GOES TO SEMI FINALS"
-            # "NOW IN LOSERS BRACKET B VS D (LB R1), WINNER GOES TO SEMI FINALS"
-            # So Semi-Final = Loser of UB Final vs Winner of LB R1.
-            
-            # We need UB Final to be done to know the loser.
             ub_final = next((m for m in matches if m["id"] == "DE_UB_F"), None)
             if ub_final and ub_final["completed"]:
-                # Create Semi Final
                 ub_loser = ub_final["team1"] if ub_final["winner"] == ub_final["team2"] else ub_final["team2"]
                 lb_winner = match["winner"]
                 
@@ -701,7 +580,6 @@ class BSNResultModal(discord.ui.Modal):
                 await mongo_manager.save_bsn_match(semi)
         
         elif match["id"] == "DE_UB_F":
-            # Loser goes to Semi Final. Check if LB R1 is done.
             lb_r1 = next((m for m in matches if m["id"] == "DE_LB_R1"), None)
             if lb_r1 and lb_r1["completed"]:
                 ub_loser = match["team1"] if match["winner"] == match["team2"] else match["team2"]
@@ -720,7 +598,6 @@ class BSNResultModal(discord.ui.Modal):
                 await mongo_manager.save_bsn_match(semi)
                 
         elif match["id"] == "DE_LB_SF":
-            # Winner goes to Grand Final against UB Final Winner
             ub_final = next((m for m in matches if m["id"] == "DE_UB_F"), None)
             if ub_final:
                 grand_final = {
@@ -764,9 +641,6 @@ class BSNMatchupsView(discord.ui.View):
         await self.handle_page(interaction, 1)
 
     async def handle_page(self, interaction, direction):
-        # We need to reconstruct the pages logic here or store state.
-        # Stateless pagination is hard without storing page in custom_id or footer.
-        # Let's parse footer.
         if not interaction.message.embeds: return
         footer = interaction.message.embeds[0].footer.text
         try:
@@ -778,14 +652,10 @@ class BSNMatchupsView(discord.ui.View):
             
         new_page = current + direction
         if new_page < 0 or new_page >= total:
-            await interaction.response.defer() # No change
+            await interaction.response.defer()
             return
             
-        # Fetch matches again
         matches = await mongo_manager.get_bsn_matches()
-        # Group by Round/Bracket
-        # Actually, user asked for "matchups automatically".
-        # Let's group by Round.
         groups = {}
         for m in matches:
             label = f"Round {m['round']}"
@@ -803,7 +673,133 @@ class BSNMatchupsView(discord.ui.View):
         embed = await self.get_embed(pages, sorted_keys, new_page)
         await interaction.response.edit_message(embed=embed, view=self)
 
-    # --- Leaderboard Helpers ---
+# --- Main Cog ---
+
+class BSNCupSystem(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    async def cog_load(self):
+        print("BSN Cup System Cog Loaded")
+        self.bot.add_view(BSNRegistrationView())
+        self.bot.add_view(BSNApprovalView())
+        self.bot.add_view(BSNDashboardView())
+        self.bot.add_view(BSNManageTeamsView())
+        self.bot.add_view(BSNTeamListView())
+        self.bot.add_view(BSNManageMatchesView())
+        self.bot.add_view(BSNMatchupsView())
+
+    # --- Commands ---
+
+    @app_commands.command(name="bsn_ping", description="Test command to check visibility")
+    async def bsn_ping(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Pong! BSN Cup system is loaded.", ephemeral=True)
+
+    @app_commands.command(name="bsn_panel", description="Drop the BSN Cup Registration Panel")
+    @is_owner()
+    async def bsn_panel(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="🏆 BSN CUP Season 3: Pick & Ban Edition",
+            description="**Registration is OPEN!**\n\n"
+                        "**Requirements:**\n"
+                        "- Team Name\n"
+                        "- Captain Tag (Must be one of the 3 players)\n"
+                        "- 1x TH18 Player\n"
+                        "- 1x TH17 Player\n"
+                        "- 1x TH16 Player\n\n"
+                        "Click the button below to apply!",
+            color=discord.Color.gold()
+        )
+        embed.set_image(url="https://i.imgur.com/placeholder.png")
+        view = BSNRegistrationView()
+        await interaction.response.send_message(embed=embed, view=view)
+
+    @app_commands.command(name="bsn_dashboard", description="Admin Dashboard for BSN Cup")
+    @is_owner()
+    async def bsn_dashboard(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="🛠️ BSN Cup Admin Dashboard", color=discord.Color.dark_grey())
+        view = BSNDashboardView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
+
+    @app_commands.command(name="bsn_teams", description="View Registered Teams and Rosters")
+    async def bsn_teams(self, interaction: discord.Interaction):
+        teams = await mongo_manager.get_bsn_teams()
+        if not teams:
+            await interaction.response.send_message("No teams registered yet.", ephemeral=True)
+            return
+
+        options = [discord.SelectOption(label=t["name"], value=t["name"]) for t in teams]
+        view = BSNTeamListView()
+        
+        select = [x for x in view.children if isinstance(x, discord.ui.Select)][0]
+        select.options = options[:25]
+        
+        embed = discord.Embed(title="🛡️ Registered Teams", description=f"Total Teams: {len(teams)}\nSelect a team below to view full roster.", color=discord.Color.blue())
+        await interaction.response.send_message(embed=embed, view=view)
+
+    @app_commands.command(name="bsn_setup_approvals", description="Set the channel for team approvals")
+    @is_owner()
+    async def bsn_setup_approvals(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        settings = await mongo_manager.get_bsn_settings() or {}
+        settings["approval_channel_id"] = channel.id
+        await mongo_manager.save_bsn_settings(settings)
+        await interaction.response.send_message(f"✅ Approval channel set to {channel.mention}", ephemeral=True)
+
+    @app_commands.command(name="bsn_leaderboard", description="Post Auto-Updating Leaderboard")
+    @is_owner()
+    async def bsn_leaderboard(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="🏆 BSN Cup Leaderboard", description="Initializing...", color=discord.Color.gold())
+        await interaction.response.send_message(embed=embed)
+        msg = await interaction.original_response()
+        
+        settings = await mongo_manager.get_bsn_settings() or {}
+        settings["leaderboard_channel_id"] = msg.channel.id
+        settings["leaderboard_message_id"] = msg.id
+        await mongo_manager.save_bsn_settings(settings)
+        await self.update_leaderboard()
+
+    @app_commands.command(name="bsn_bracket", description="Post Auto-Updating Bracket")
+    @is_owner()
+    async def bsn_bracket(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="⚔️ Tournament Bracket", description="Initializing...", color=discord.Color.blue())
+        await interaction.response.send_message(embed=embed)
+        msg = await interaction.original_response()
+        
+        settings = await mongo_manager.get_bsn_settings() or {}
+        settings["bracket_channel_id"] = msg.channel.id
+        settings["bracket_message_id"] = msg.id
+        await mongo_manager.save_bsn_settings(settings)
+        await self.update_bracket()
+
+    @app_commands.command(name="bsn_matchups", description="View Matchups")
+    async def bsn_matchups(self, interaction: discord.Interaction):
+        matches = await mongo_manager.get_bsn_matches()
+        if not matches:
+            await interaction.response.send_message("No matches found.", ephemeral=True)
+            return
+            
+        groups = {}
+        for m in matches:
+            label = f"Round {m['round']}"
+            if m.get("bracket"): label += f" ({m['bracket'].title()})"
+            if label not in groups: groups[label] = []
+            groups[label].append(m)
+            
+        sorted_keys = sorted(groups.keys())
+        pages = [groups[k] for k in sorted_keys]
+        
+        view = BSNMatchupsView()
+        embed = await view.get_embed(pages, sorted_keys, 0)
+        await interaction.response.send_message(embed=embed, view=view)
+
+    @app_commands.command(name="bsn_player_stats", description="View Player Statistics")
+    async def bsn_player_stats(self, interaction: discord.Interaction):
+        # Placeholder for player stats if needed, or just remove if not requested yet.
+        # User asked for "bsn_player_stats" in previous prompts?
+        # Let's implement a basic one.
+        await interaction.response.send_message("Player stats feature coming soon!", ephemeral=True)
+
+    # --- Helpers ---
 
     async def update_leaderboard(self):
         settings = await mongo_manager.get_bsn_settings()
@@ -855,7 +851,6 @@ class BSNMatchupsView(discord.ui.View):
         
         matches = await mongo_manager.get_bsn_matches()
         
-        # Simple text representation of bracket
         embed = discord.Embed(title="⚔️ Tournament Bracket", color=discord.Color.blue())
         
         r1 = [m for m in matches if m["round"] == 1]
@@ -875,56 +870,6 @@ class BSNMatchupsView(discord.ui.View):
             
         embed.timestamp = datetime.datetime.now()
         await message.edit(embed=embed)
-
-    # --- Commands for Leaderboards ---
-
-    @app_commands.command(name="bsn_leaderboard", description="Post Auto-Updating Leaderboard")
-    @is_owner()
-    async def bsn_leaderboard(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="🏆 BSN Cup Leaderboard", description="Initializing...", color=discord.Color.gold())
-        await interaction.response.send_message(embed=embed)
-        msg = await interaction.original_response()
-        
-        settings = await mongo_manager.get_bsn_settings() or {}
-        settings["leaderboard_channel_id"] = msg.channel.id
-        settings["leaderboard_message_id"] = msg.id
-        await mongo_manager.save_bsn_settings(settings)
-        await self.update_leaderboard()
-
-    @app_commands.command(name="bsn_bracket", description="Post Auto-Updating Bracket")
-    @is_owner()
-    async def bsn_bracket(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="⚔️ Tournament Bracket", description="Initializing...", color=discord.Color.blue())
-        await interaction.response.send_message(embed=embed)
-        msg = await interaction.original_response()
-        
-        settings = await mongo_manager.get_bsn_settings() or {}
-        settings["bracket_channel_id"] = msg.channel.id
-        settings["bracket_message_id"] = msg.id
-        await mongo_manager.save_bsn_settings(settings)
-        await self.update_bracket()
-
-    @app_commands.command(name="bsn_matchups", description="View Matchups")
-    async def bsn_matchups(self, interaction: discord.Interaction):
-        matches = await mongo_manager.get_bsn_matches()
-        if not matches:
-            await interaction.response.send_message("No matches found.", ephemeral=True)
-            return
-            
-        # Group by Round
-        groups = {}
-        for m in matches:
-            label = f"Round {m['round']}"
-            if m.get("bracket"): label += f" ({m['bracket'].title()})"
-            if label not in groups: groups[label] = []
-            groups[label].append(m)
-            
-        sorted_keys = sorted(groups.keys())
-        pages = [groups[k] for k in sorted_keys]
-        
-        view = BSNMatchupsView()
-        embed = await view.get_embed(pages, sorted_keys, 0)
-        await interaction.response.send_message(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(BSNCupSystem(bot))
