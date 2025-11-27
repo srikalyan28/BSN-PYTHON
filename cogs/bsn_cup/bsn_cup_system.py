@@ -6,6 +6,15 @@ from utils.coc_api import coc_api
 import datetime
 import itertools
 
+# --- Helper Decorator ---
+def is_owner():
+    async def predicate(interaction: discord.Interaction):
+        if interaction.user.id != 1272176835769405552:
+            await interaction.response.send_message("❌ You are not authorized to use this command.", ephemeral=True)
+            return False
+        return True
+    return app_commands.check(predicate)
+
 class BSNCupSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -20,14 +29,7 @@ class BSNCupSystem(commands.Cog):
         self.bot.add_view(BSNManageMatchesView())
         self.bot.add_view(BSNMatchupsView())
 
-# --- Helper Decorator ---
-def is_owner():
-    async def predicate(interaction: discord.Interaction):
-        if interaction.user.id != 1272176835769405552:
-            await interaction.response.send_message("❌ You are not authorized to use this command.", ephemeral=True)
-            return False
-        return True
-    return app_commands.check(predicate)
+
 
     # --- Commands ---
 
