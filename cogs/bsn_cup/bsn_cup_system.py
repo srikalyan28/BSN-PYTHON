@@ -230,6 +230,17 @@ class BSNConfirmResetView(discord.ui.View):
             await mongo_manager.delete_bsn_match(m["id"])
         
         await interaction.followup.send("✅ Tournament Reset! All matches deleted.", ephemeral=True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Cancelled.", ephemeral=True)
+
+class BSNManageTeamsView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Remove Team", style=discord.ButtonStyle.danger, custom_id="bsn_remove_team")
+    async def remove_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         teams = await mongo_manager.get_bsn_teams()
         if not teams:
             await interaction.response.send_message("No teams to remove.", ephemeral=True)
