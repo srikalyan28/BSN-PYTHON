@@ -6,11 +6,27 @@ from utils.coc_api import coc_api
 import datetime
 import itertools
 
+# --- Constants ---
+OWNER_ID = 1272176835769405552
+ALLOWED_ADMINS = [
+    1272176835769405552, # Owner
+    726332723693748244,
+    927445011396689951
+]
+
 # --- Helper Decorator ---
+def is_admin():
+    async def predicate(interaction: discord.Interaction):
+        if interaction.user.id not in ALLOWED_ADMINS:
+            await interaction.response.send_message("❌ You are not authorized to use this command.", ephemeral=True)
+            return False
+        return True
+    return app_commands.check(predicate)
+
 def is_owner():
     async def predicate(interaction: discord.Interaction):
-        if interaction.user.id != 1272176835769405552:
-            await interaction.response.send_message("❌ You are not authorized to use this command.", ephemeral=True)
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Only the Owner can use this command.", ephemeral=True)
             return False
         return True
     return app_commands.check(predicate)
@@ -203,15 +219,21 @@ class BSNDashboardView(discord.ui.View):
 
     @discord.ui.button(label="Manage Teams", style=discord.ButtonStyle.primary, custom_id="bsn_manage_teams")
     async def manage_teams(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Only the Owner can manage teams.", ephemeral=True)
+            return
         await interaction.response.send_message("Select an action:", view=BSNManageTeamsView(), ephemeral=True)
 
     @discord.ui.button(label="Manage Matches", style=discord.ButtonStyle.secondary, custom_id="bsn_manage_matches")
     async def manage_matches(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in ALLOWED_ADMINS:
+            await interaction.response.send_message("❌ You are not authorized to manage matches.", ephemeral=True)
+            return
         await interaction.response.send_message("Select an action:", view=BSNManageMatchesView(), ephemeral=True)
 
     @discord.ui.button(label="Reset Tournament", style=discord.ButtonStyle.danger, row=2, custom_id="bsn_reset_tournament")
     async def reset_tournament(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != 1272176835769405552:
+        if interaction.user.id != OWNER_ID:
             await interaction.response.send_message("❌ Only the Owner can reset the tournament.", ephemeral=True)
             return
         
@@ -900,7 +922,7 @@ class BSNCupSystem(commands.Cog):
         await interaction.response.send_message(embed=embed, view=view)
 
     @app_commands.command(name="bsn_dashboard", description="Admin Dashboard for BSN Cup")
-    @is_owner()
+    @is_admin()
     async def bsn_dashboard(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🛠️ BSN Cup Admin Dashboard", color=discord.Color.dark_grey())
         view = BSNDashboardView()
