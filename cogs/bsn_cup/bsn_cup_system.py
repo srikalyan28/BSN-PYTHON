@@ -230,17 +230,6 @@ class BSNConfirmResetView(discord.ui.View):
             await mongo_manager.delete_bsn_match(m["id"])
         
         await interaction.followup.send("✅ Tournament Reset! All matches deleted.", ephemeral=True)
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Cancelled.", ephemeral=True)
-
-class BSNManageTeamsView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="Remove Team", style=discord.ButtonStyle.danger, custom_id="bsn_remove_team")
-    async def remove_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         teams = await mongo_manager.get_bsn_teams()
         if not teams:
             await interaction.response.send_message("No teams to remove.", ephemeral=True)
@@ -365,6 +354,220 @@ class BSNEditTeamModal(discord.ui.Modal):
         view.add_item(select)
         await interaction.response.send_message("Select match to edit:", view=view, ephemeral=True)
 
+class BSNTeamListView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.select(placeholder="Select a team to view roster", custom_id="bsn_team_list_select", options=[discord.SelectOption(label="Loading...", value="loading")])
+    async def select_team(self, interaction: discord.Interaction, select: discord.ui.Select):
+        team_name = select.values[0]
+        teams = await mongo_manager.get_bsn_teams()
+        team = next((t for t in teams if t["name"] == team_name), None)
+        
+        if not team:
+            await interaction.response.send_message("Team not found.", ephemeral=True)
+            return
+            
+        embed = discord.Embed(title=f"🛡️ {team['name']}", color=discord.Color.blue())
+        embed.add_field(name="Captain", value=f"{team.get('captain_name', 'Unknown')} ({team.get('captain_tag')})", inline=False)
+        
+        roster = ""
+        for p in team["players"]:
+            roster += f"TH{p.get('th', '?')}: {p['name']} ({p['tag']})\n"
+        
+        embed.add_field(name="Roster", value=roster, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class BSNManageMatchesView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Generate Round 1", style=discord.ButtonStyle.success, custom_id="bsn_gen_r1")
+    async def gen_r1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        matches = await mongo_manager.get_bsn_matches()
+        if any(m["round"] == 1 for m in matches):
+            await interaction.followup.send("❌ Round 1 matches already exist.", ephemeral=True)
+            return
+
+        teams = await mongo_manager.get_bsn_teams()
+        if len(teams) < 16:
+            await interaction.followup.send(f"⚠️ Warning: Only {len(teams)} teams registered. Need 16 for full bracket. Proceeding anyway...", ephemeral=True)
+        
+        import random
+        random.shuffle(teams)
+        
+        generated = []
+        for i in range(0, len(teams), 2):
+            if i + 1 >= len(teams): break
+            t1 = teams[i]
+            t2 = teams[i+1]
+            
+            match_id = f"R1_M{i//2 + 1}"
+            match_data = {
+                "id": match_id,
+                "label": f"Round 1 - Match {i//2 + 1}",
+                "team1": t1["name"],
+                "team2": t2["name"],
+                "round": 1,
+                "completed": False,
+                "winner": None
+            }
+            generated.append(match_data)
+            await mongo_manager.save_bsn_match(match_data)
+            
+        # Create Threads
+        cog = interaction.client.get_cog("BSNCupSystem")
+        if cog:
+            count = 0
+            for m in generated:
+                if await cog.create_match_thread(m): count += 1
+            await interaction.followup.send(f"✅ Generated {len(generated)} matches for Round 1. Created {count} threads.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"✅ Generated {len(generated)} matches for Round 1.", ephemeral=True)
+
+    @discord.ui.button(label="Generate Round 2", style=discord.ButtonStyle.success, custom_id="bsn_gen_r2")
+    async def gen_r2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        matches = await mongo_manager.get_bsn_matches()
+        r1_matches = [m for m in matches if m["round"] == 1]
+        
+        if not all(m["completed"] for m in r1_matches):
+            await interaction.followup.send("❌ Round 1 is not complete yet.", ephemeral=True)
+            return
+            
+        winners = [m["winner"] for m in r1_matches if m["winner"]]
+        if len(winners) < 2:
+             await interaction.followup.send("❌ Not enough winners to generate Round 2.", ephemeral=True)
+             return
+             
+        generated = []
+        for i in range(0, len(winners), 2):
+            if i + 1 >= len(winners): break
+            t1 = winners[i]
+            t2 = winners[i+1]
+            
+            match_id = f"R2_M{i//2 + 1}"
+            match_data = {
+                "id": match_id,
+                "label": f"Round 2 - Match {i//2 + 1}",
+                "team1": t1,
+                "team2": t2,
+                "round": 2,
+                "completed": False,
+                "winner": None
+            }
+            generated.append(match_data)
+            await mongo_manager.save_bsn_match(match_data)
+            
+        # Create Threads
+        cog = interaction.client.get_cog("BSNCupSystem")
+        if cog:
+            count = 0
+            for m in generated:
+                if await cog.create_match_thread(m): count += 1
+            await interaction.followup.send(f"✅ Generated {len(generated)} matches for Round 2. Created {count} threads.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"✅ Generated {len(generated)} matches for Round 2.", ephemeral=True)
+
+    @discord.ui.button(label="Generate Double Elim", style=discord.ButtonStyle.success, custom_id="bsn_gen_r3")
+    async def gen_r3(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        matches = await mongo_manager.get_bsn_matches()
+        r2_matches = [m for m in matches if m["round"] == 2]
+        
+        if not all(m["completed"] for m in r2_matches):
+            await interaction.followup.send("❌ Round 2 is not complete yet.", ephemeral=True)
+            return
+
+        winners = [m["winner"] for m in r2_matches if m["winner"]]
+        
+        if len(winners) != 4:
+            await interaction.followup.send(f"❌ Need exactly 4 winners from Round 2 to start Double Elim (Found {len(winners)}).", ephemeral=True)
+            return
+            
+        m1 = {
+            "id": "DE_UB_SF1",
+            "label": "Upper Bracket Semi 1",
+            "team1": winners[0],
+            "team2": winners[1],
+            "round": 3,
+            "bracket": "upper",
+            "completed": False,
+            "winner": None
+        }
+        m2 = {
+            "id": "DE_UB_SF2",
+            "label": "Upper Bracket Semi 2",
+            "team1": winners[2],
+            "team2": winners[3],
+            "round": 3,
+            "bracket": "upper",
+            "completed": False,
+            "winner": None
+        }
+        
+        await mongo_manager.save_bsn_match(m1)
+        await mongo_manager.save_bsn_match(m2)
+        
+        # Create Threads
+        cog = interaction.client.get_cog("BSNCupSystem")
+        if cog:
+            await cog.create_match_thread(m1)
+            await cog.create_match_thread(m2)
+        
+        await interaction.followup.send("✅ Generated Double Elimination Bracket (Upper Semis). Threads created.", ephemeral=True)
+
+    @discord.ui.button(label="Enter Result", style=discord.ButtonStyle.primary, custom_id="bsn_enter_result")
+    async def enter_result(self, interaction: discord.Interaction, button: discord.ui.Button):
+        matches = await mongo_manager.get_bsn_matches()
+        active = [m for m in matches if not m["completed"]]
+        
+        if not active:
+            await interaction.response.send_message("No active matches found.", ephemeral=True)
+            return
+            
+        options = []
+        for m in active[:25]:
+            options.append(discord.SelectOption(label=f"{m['label']}: {m['team1']} vs {m['team2']}", value=m['id']))
+            
+        view = discord.ui.View()
+        select = discord.ui.Select(placeholder="Select Match", options=options)
+        
+        async def callback(inter: discord.Interaction):
+            match_id = select.values[0]
+            match = next((m for m in matches if m["id"] == match_id), None)
+            await inter.response.send_message(f"Entering result for **{match['label']}**", view=BSNResultEntryView(match), ephemeral=True)
+            
+        select.callback = callback
+        view.add_item(select)
+        await interaction.response.send_message("Select match to enter result:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Edit Result", style=discord.ButtonStyle.secondary, custom_id="bsn_edit_result")
+    async def edit_result(self, interaction: discord.Interaction, button: discord.ui.Button):
+        matches = await mongo_manager.get_bsn_matches()
+        completed = [m for m in matches if m["completed"]]
+        
+        if not completed:
+            await interaction.response.send_message("No completed matches to edit.", ephemeral=True)
+            return
+            
+        options = []
+        for m in completed[:25]:
+            options.append(discord.SelectOption(label=f"{m['label']}: {m['team1']} vs {m['team2']}", value=m['id']))
+            
+        view = discord.ui.View()
+        select = discord.ui.Select(placeholder="Select Match to Edit", options=options)
+        
+        async def callback(inter: discord.Interaction):
+            match_id = select.values[0]
+            match = next((m for m in matches if m["id"] == match_id), None)
+            await inter.response.send_message(f"⚠️ **EDITING RESULT** for **{match['label']}**.\nPrevious Winner: {match.get('winner')}\n\nPlease re-enter stats for BOTH teams to recalculate.", view=BSNResultEntryView(match), ephemeral=True)
+            
+        select.callback = callback
+        view.add_item(select)
+        await interaction.response.send_message("Select match to edit:", view=view, ephemeral=True)
+
 class BSNResultEntryView(discord.ui.View):
     def __init__(self, match_data):
         super().__init__(timeout=None)
@@ -372,22 +575,33 @@ class BSNResultEntryView(discord.ui.View):
 
     @discord.ui.button(label="Enter Team 1 Stats", style=discord.ButtonStyle.primary)
     async def team1_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(BSNTeamStatsModal(self.match_data, "team1"))
+        team_name = self.match_data["team1"]
+        teams = await mongo_manager.get_bsn_teams()
+        team = next((t for t in teams if t["name"] == team_name), None)
+        player_names = [p["name"] for p in team["players"]] if team else ["Player 1", "Player 2", "Player 3"]
+        await interaction.response.send_modal(BSNTeamStatsModal(self.match_data, "team1", player_names))
 
     @discord.ui.button(label="Enter Team 2 Stats", style=discord.ButtonStyle.primary)
     async def team2_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(BSNTeamStatsModal(self.match_data, "team2"))
+        team_name = self.match_data["team2"]
+        teams = await mongo_manager.get_bsn_teams()
+        team = next((t for t in teams if t["name"] == team_name), None)
+        player_names = [p["name"] for p in team["players"]] if team else ["Player 1", "Player 2", "Player 3"]
+        await interaction.response.send_modal(BSNTeamStatsModal(self.match_data, "team2", player_names))
 
 class BSNTeamStatsModal(discord.ui.Modal):
-    def __init__(self, match_data, team_key):
+    def __init__(self, match_data, team_key, player_names):
         team_name = match_data[team_key]
         super().__init__(title=f"Stats: {team_name}"[:45])
         self.match_data = match_data
         self.team_key = team_key
         
-        self.p1 = discord.ui.TextInput(label="Player 1 (Stars %)", placeholder="e.g. 3 100")
-        self.p2 = discord.ui.TextInput(label="Player 2 (Stars %)", placeholder="e.g. 2 85")
-        self.p3 = discord.ui.TextInput(label="Player 3 (Stars %)", placeholder="e.g. 3 100")
+        # Ensure we have 3 names
+        while len(player_names) < 3: player_names.append(f"Player {len(player_names)+1}")
+        
+        self.p1 = discord.ui.TextInput(label=f"{player_names[0]} (Stars %)", placeholder="e.g. 3 100")
+        self.p2 = discord.ui.TextInput(label=f"{player_names[1]} (Stars %)", placeholder="e.g. 2 85")
+        self.p3 = discord.ui.TextInput(label=f"{player_names[2]} (Stars %)", placeholder="e.g. 3 100")
         
         self.add_item(self.p1)
         self.add_item(self.p2)
