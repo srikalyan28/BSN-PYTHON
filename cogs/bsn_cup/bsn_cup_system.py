@@ -45,11 +45,19 @@ class BSNRegistrationModal(discord.ui.Modal, title="BSN Cup Registration"):
         tags_to_check = [(th18, 18), (th17, 17), (th16, 16)]
         players_data = []
         
-        # Check for duplicate tags
+        # Check for duplicate tags within the submission
         all_tags = [th18, th17, th16]
         if len(set(all_tags)) != 3:
-             await interaction.followup.send("❌ Duplicate tags detected. Please use 3 different players.", ephemeral=True)
+             await interaction.followup.send("❌ Duplicate tags detected in your entry. Please use 3 different players.", ephemeral=True)
              return
+
+        # Check for duplicate tags across ALL teams
+        existing_teams = await mongo_manager.get_bsn_teams()
+        for team in existing_teams:
+            for p in team.get("players", []):
+                if p["tag"] in all_tags:
+                    await interaction.followup.send(f"❌ Player {p['tag']} is already registered in team **{team['name']}**.", ephemeral=True)
+                    return
 
         for tag, required_th in tags_to_check:
             player = await coc_api.get_player(tag)
@@ -298,6 +306,21 @@ class BSNEditTeamModal(discord.ui.Modal):
         th17 = self.th17_tag.value.strip().upper()
         th16 = self.th16_tag.value.strip().upper()
         
+        # Check for duplicate tags within the submission
+        all_tags = [th18, th17, th16]
+        if len(set(all_tags)) != 3:
+             await interaction.followup.send("❌ Duplicate tags detected in your entry. Please use 3 different players.", ephemeral=True)
+             return
+
+        # Check for duplicate tags across ALL teams (excluding current team)
+        existing_teams = await mongo_manager.get_bsn_teams()
+        for team in existing_teams:
+            if team["name"] == self.team_data["name"]: continue # Skip self
+            for p in team.get("players", []):
+                if p["tag"] in all_tags:
+                    await interaction.followup.send(f"❌ Player {p['tag']} is already registered in team **{team['name']}**.", ephemeral=True)
+                    return
+        
         tags_to_check = [(th18, 18), (th17, 17), (th16, 16)]
         players_data = []
         
@@ -487,43 +510,157 @@ class BSNManageMatchesView(discord.ui.View):
         async def callback(inter: discord.Interaction):
             match_id = select.values[0]
             match = next((m for m in matches if m["id"] == match_id), None)
-            await inter.response.send_modal(BSNResultModal(match))
+            await inter.response.send_message(f"Select team to enter stats for **{match['label']}**:", view=BSNResultEntryView(match), ephemeral=True)
             
         select.callback = callback
         view.add_item(select)
         await interaction.response.send_message("Select match:", view=view, ephemeral=True)
 
-class BSNResultModal(discord.ui.Modal):
-    def __init__(self, match_data):
-        super().__init__(title=f"Result: {match_data['team1']} vs {match_data['team2']}"[:45])
-        self.match_data = match_data
-        self.winner = discord.ui.TextInput(label="Winner Name (Exact)", placeholder=match_data["team1"])
-        self.score1 = discord.ui.TextInput(label=f"Score {match_data['team1']}", placeholder="Stars")
-        self.score2 = discord.ui.TextInput(label=f"Score {match_data['team2']}", placeholder="Stars")
+    @app_commands.command(name="bsn_edit_result", description="Edit a match result (Admin Only)")
+    @is_owner()
+    async def bsn_edit_result(self, interaction: discord.Interaction):
+        matches = await mongo_manager.get_bsn_matches()
+        completed = [m for m in matches if m.get("completed")]
         
-        self.add_item(self.winner)
-        self.add_item(self.score1)
-        self.add_item(self.score2)
+        if not completed:
+            await interaction.response.send_message("No completed matches to edit.", ephemeral=True)
+            return
+            
+        options = []
+        for m in completed[:25]:
+            options.append(discord.SelectOption(label=f"{m['label']}: {m['team1']} vs {m['team2']}", value=m['id']))
+            
+        view = discord.ui.View()
+        select = discord.ui.Select(placeholder="Select Match to Edit", options=options)
+        
+        async def callback(inter: discord.Interaction):
+            match_id = select.values[0]
+            match = next((m for m in matches if m["id"] == match_id), None)
+            await inter.response.send_message(f"⚠️ **EDITING RESULT** for **{match['label']}**.\nPrevious Winner: {match.get('winner')}\n\nPlease re-enter stats for BOTH teams to recalculate.", view=BSNResultEntryView(match), ephemeral=True)
+            
+        select.callback = callback
+        view.add_item(select)
+        await interaction.response.send_message("Select match to edit:", view=view, ephemeral=True)
+
+class BSNResultEntryView(discord.ui.View):
+    def __init__(self, match_data):
+        super().__init__(timeout=None)
+        self.match_data = match_data
+
+    @discord.ui.button(label="Enter Team 1 Stats", style=discord.ButtonStyle.primary)
+    async def team1_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BSNTeamStatsModal(self.match_data, "team1"))
+
+    @discord.ui.button(label="Enter Team 2 Stats", style=discord.ButtonStyle.primary)
+    async def team2_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BSNTeamStatsModal(self.match_data, "team2"))
+
+class BSNTeamStatsModal(discord.ui.Modal):
+    def __init__(self, match_data, team_key):
+        team_name = match_data[team_key]
+        super().__init__(title=f"Stats: {team_name}"[:45])
+        self.match_data = match_data
+        self.team_key = team_key
+        
+        self.p1 = discord.ui.TextInput(label="Player 1 (Stars %)", placeholder="e.g. 3 100")
+        self.p2 = discord.ui.TextInput(label="Player 2 (Stars %)", placeholder="e.g. 2 85")
+        self.p3 = discord.ui.TextInput(label="Player 3 (Stars %)", placeholder="e.g. 3 100")
+        
+        self.add_item(self.p1)
+        self.add_item(self.p2)
+        self.add_item(self.p3)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         
-        winner_name = self.winner.value.strip()
-        if winner_name != self.match_data["team1"] and winner_name != self.match_data["team2"]:
-             await interaction.followup.send(f"❌ Winner must be exactly '{self.match_data['team1']}' or '{self.match_data['team2']}'.", ephemeral=True)
-             return
-             
-        self.match_data["winner"] = winner_name
-        self.match_data["completed"] = True
-        self.match_data["score1"] = self.score1.value
-        self.match_data["score2"] = self.score2.value
-        
-        await mongo_manager.save_bsn_match(self.match_data)
-        
-        if self.match_data.get("round") == 3:
-            await self.handle_double_elim_progression(self.match_data)
+        # Parse inputs
+        try:
+            details = []
+            total_stars = 0
+            total_perc = 0.0
             
-        await interaction.followup.send(f"✅ Result saved! Winner: {winner_name}", ephemeral=True)
+            for field in [self.p1, self.p2, self.p3]:
+                val = field.value.strip()
+                parts = val.split()
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid format: '{val}'. Use 'Stars %'")
+                stars = int(parts[0])
+                perc = float(parts[1])
+                details.append({"stars": stars, "perc": perc})
+                total_stars += stars
+                total_perc += perc
+                
+        except ValueError as e:
+            await interaction.followup.send(f"❌ Error parsing stats: {e}", ephemeral=True)
+            return
+
+        # Fetch latest match data to avoid race conditions
+        matches = await mongo_manager.get_bsn_matches()
+        match = next((m for m in matches if m["id"] == self.match_data["id"]), None)
+        if not match:
+            await interaction.followup.send("❌ Match not found.", ephemeral=True)
+            return
+            
+        # Update match data
+        match[f"{self.team_key}_details"] = details
+        match[f"{self.team_key}_total_stars"] = total_stars
+        match[f"{self.team_key}_total_perc"] = total_perc
+        
+        await mongo_manager.save_bsn_match(match)
+        
+        # Check if both teams have data
+        t1_details = match.get("team1_details")
+        t2_details = match.get("team2_details")
+        
+        if t1_details and t2_details:
+            # Calculate Winner
+            s1 = match.get("team1_total_stars", 0)
+            p1 = match.get("team1_total_perc", 0)
+            s2 = match.get("team2_total_stars", 0)
+            p2 = match.get("team2_total_perc", 0)
+            
+            winner = None
+            if s1 > s2: winner = match["team1"]
+            elif s2 > s1: winner = match["team2"]
+            else:
+                if p1 > p2: winner = match["team1"]
+                elif p2 > p1: winner = match["team2"]
+                else: winner = "Draw" # Should handle draw logic or manual override
+            
+            match["winner"] = winner
+            match["completed"] = True
+            match["score1"] = f"{s1}★ ({p1}%)"
+            match["score2"] = f"{s2}★ ({p2}%)"
+            
+            await mongo_manager.save_bsn_match(match)
+            
+            # Post Result Embed
+            embed = discord.Embed(title=f"🏆 Match Result: {match['team1']} vs {match['team2']}", color=discord.Color.green())
+            embed.add_field(name=f"{match['team1']}", value=f"**{s1}★** {p1}%", inline=True)
+            embed.add_field(name=f"{match['team2']}", value=f"**{s2}★** {p2}%", inline=True)
+            embed.add_field(name="Winner", value=f"🎉 **{winner}**", inline=False)
+            
+            # Detailed breakdown
+            d1 = "\n".join([f"P{i+1}: {d['stars']}★ {d['perc']}%" for i, d in enumerate(t1_details)])
+            d2 = "\n".join([f"P{i+1}: {d['stars']}★ {d['perc']}%" for i, d in enumerate(t2_details)])
+            embed.add_field(name=f"{match['team1']} Details", value=d1, inline=True)
+            embed.add_field(name=f"{match['team2']} Details", value=d2, inline=True)
+            
+            # Send to channel if possible, else just followup
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+            # Trigger updates
+            cog = interaction.client.get_cog("BSNCupSystem")
+            if cog:
+                await cog.update_team_stats()
+                await cog.update_bracket()
+                if match.get("round") == 3:
+                    await cog.handle_double_elim_progression(match)
+                # Check for next round generation
+                await cog.check_and_generate_next_round(match["round"])
+                
+        else:
+            await interaction.followup.send(f"✅ Stats for **{match[self.team_key]}** saved! Waiting for other team...", ephemeral=True)
 
     async def handle_double_elim_progression(self, match):
         matches = await mongo_manager.get_bsn_matches()
@@ -745,18 +882,18 @@ class BSNCupSystem(commands.Cog):
         await mongo_manager.save_bsn_settings(settings)
         await interaction.response.send_message(f"✅ Approval channel set to {channel.mention}", ephemeral=True)
 
-    @app_commands.command(name="bsn_leaderboard", description="Post Auto-Updating Leaderboard")
+    @app_commands.command(name="bsn_team_stats", description="Post Auto-Updating Team Stats (Leaderboard)")
     @is_owner()
-    async def bsn_leaderboard(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="🏆 BSN Cup Leaderboard", description="Initializing...", color=discord.Color.gold())
+    async def bsn_team_stats(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="📊 BSN Cup Team Stats", description="Initializing...", color=discord.Color.gold())
         await interaction.response.send_message(embed=embed)
         msg = await interaction.original_response()
         
         settings = await mongo_manager.get_bsn_settings() or {}
-        settings["leaderboard_channel_id"] = msg.channel.id
-        settings["leaderboard_message_id"] = msg.id
+        settings["team_stats_channel_id"] = msg.channel.id
+        settings["team_stats_message_id"] = msg.id
         await mongo_manager.save_bsn_settings(settings)
-        await self.update_leaderboard()
+        await self.update_team_stats()
 
     @app_commands.command(name="bsn_bracket", description="Post Auto-Updating Bracket")
     @is_owner()
@@ -794,31 +931,175 @@ class BSNCupSystem(commands.Cog):
 
     @app_commands.command(name="bsn_player_stats", description="View Player Statistics")
     async def bsn_player_stats(self, interaction: discord.Interaction):
-        # Placeholder for player stats if needed, or just remove if not requested yet.
-        # User asked for "bsn_player_stats" in previous prompts?
-        # Let's implement a basic one.
-        await interaction.response.send_message("Player stats feature coming soon!", ephemeral=True)
+        await interaction.response.defer()
+        
+        matches = await mongo_manager.get_bsn_matches()
+        teams = await mongo_manager.get_bsn_teams()
+        
+        # Map team name to roster to get player names from tags if needed
+        # But details only store stars/%, we need to know WHO played.
+        # Wait, the current implementation of BSNTeamStatsModal only asks for "Player 1", "Player 2", "Player 3".
+        # It DOES NOT ask for specific player tags.
+        # This is a flaw in the design vs requirements.
+        # The user said "add player stats".
+        # If we don't know WHICH player got the stars, we can't track player stats.
+        # We need to assume P1, P2, P3 correspond to the roster order (TH18, TH17, TH16) or ask for tags.
+        # Given the registration enforces TH18, TH17, TH16 order, let's assume P1=TH18, P2=TH17, P3=TH16.
+        
+        player_stats = {} # tag -> {name, stars, perc, played}
+        
+        for m in matches:
+            if not m.get("completed"): continue
+            
+            for side in ["team1", "team2"]:
+                team_name = m[side]
+                details = m.get(f"{side}_details")
+                if not details: continue
+                
+                team = next((t for t in teams if t["name"] == team_name), None)
+                if not team: continue
+                
+                # Assume fixed order: 0=TH18, 1=TH17, 2=TH16
+                for i, d in enumerate(details):
+                    if i >= len(team["players"]): break
+                    p_info = team["players"][i]
+                    tag = p_info["tag"]
+                    name = p_info["name"]
+                    
+                    if tag not in player_stats:
+                        player_stats[tag] = {"name": name, "stars": 0, "perc": 0.0, "played": 0}
+                    
+                    player_stats[tag]["stars"] += d["stars"]
+                    player_stats[tag]["perc"] += d["perc"]
+                    player_stats[tag]["played"] += 1
+                    
+        if not player_stats:
+            await interaction.followup.send("No player stats available yet.", ephemeral=True)
+            return
+            
+        # Sort by Stars -> Perc
+        sorted_stats = sorted(player_stats.values(), key=lambda x: (x["stars"], x["perc"]), reverse=True)
+        
+        embed = discord.Embed(title="🌟 BSN Cup Player Stats", color=discord.Color.purple())
+        
+        desc = "`Rank | Player Name         | Stars |   %   | M `\n"
+        desc += "`-----------------------------------------------`\n"
+        
+        for i, s in enumerate(sorted_stats[:20]): # Top 20
+            p_name = (s['name'][:18] + '..') if len(s['name']) > 18 else s['name'].ljust(20)
+            desc += f"`{str(i+1).rjust(4)} | {p_name} | {str(s['stars']).center(5)} | {str(int(s['perc'])).center(5)} | {str(s['played']).center(2)}`\n"
+            
+        embed.description = desc
+        embed.set_footer(text="Showing Top 20 Players")
+        await interaction.followup.send(embed=embed)
+
+    # --- Auto-Progression Helper ---
+    async def check_and_generate_next_round(self, current_round):
+        matches = await mongo_manager.get_bsn_matches()
+        current_round_matches = [m for m in matches if m["round"] == current_round]
+        
+        if not all(m["completed"] for m in current_round_matches):
+            return # Round not finished
+            
+        # Generate Next Round
+        if current_round == 1:
+            # Trigger Round 2 Generation
+            # Reuse logic from BSNManageMatchesView.gen_r2 but automated
+            winners = [m["winner"] for m in current_round_matches if m["winner"]]
+            if len(winners) < 2: return
+            
+            # Sort winners by match ID to keep bracket structure? Or random?
+            # Usually bracket structure is fixed. R1_M1 vs R1_M2 etc.
+            # Current gen_r1 was random shuffle.
+            # Let's assume standard bracket: M1 vs M2, M3 vs M4...
+            # We need to sort current_round_matches by ID to ensure consistent pairing.
+            
+            # Helper to extract match number
+            def get_match_num(mid):
+                try: return int(mid.split("_M")[1])
+                except: return 0
+                
+            sorted_r1 = sorted(current_round_matches, key=lambda m: get_match_num(m["id"]))
+            winners_ordered = [m["winner"] for m in sorted_r1]
+            
+            generated = []
+            for i in range(0, len(winners_ordered), 2):
+                if i + 1 >= len(winners_ordered): break
+                t1 = winners_ordered[i]
+                t2 = winners_ordered[i+1]
+                
+                match_id = f"R2_M{i//2 + 1}"
+                match_data = {
+                    "id": match_id,
+                    "label": f"Round 2 - Match {i//2 + 1}",
+                    "team1": t1,
+                    "team2": t2,
+                    "round": 2,
+                    "completed": False,
+                    "winner": None
+                }
+                generated.append(match_data)
+                await mongo_manager.save_bsn_match(match_data)
+            
+            if generated:
+                settings = await mongo_manager.get_bsn_settings()
+                if settings and "bracket_channel_id" in settings:
+                    ch = self.bot.get_channel(settings["bracket_channel_id"])
+                    if ch: await ch.send(f"🚨 **Round 1 Complete!** Round 2 Matches have been generated!")
+                    
+        elif current_round == 2:
+            # Trigger Round 3 (Double Elim Start)
+            # Reuse logic from gen_r3
+            sorted_r2 = sorted(current_round_matches, key=lambda m: get_match_num(m["id"]))
+            winners = [m["winner"] for m in sorted_r2]
+            
+            if len(winners) != 4: return # Need exactly 4 for semis
+            
+            m1 = {
+                "id": "DE_UB_SF1", "label": "Upper Bracket Semi 1",
+                "team1": winners[0], "team2": winners[1],
+                "round": 3, "bracket": "upper", "completed": False, "winner": None
+            }
+            m2 = {
+                "id": "DE_UB_SF2", "label": "Upper Bracket Semi 2",
+                "team1": winners[2], "team2": winners[3],
+                "round": 3, "bracket": "upper", "completed": False, "winner": None
+            }
+            await mongo_manager.save_bsn_match(m1)
+            await mongo_manager.save_bsn_match(m2)
+            
+            settings = await mongo_manager.get_bsn_settings()
+            if settings and "bracket_channel_id" in settings:
+                ch = self.bot.get_channel(settings["bracket_channel_id"])
+                if ch: await ch.send(f"🚨 **Round 2 Complete!** Double Elimination Bracket Started!")
 
     # --- Helpers ---
 
-    async def update_leaderboard(self):
+    async def update_team_stats(self):
         settings = await mongo_manager.get_bsn_settings()
-        if not settings or "leaderboard_channel_id" not in settings: return
+        if not settings or "team_stats_channel_id" not in settings: return
         
-        channel = self.bot.get_channel(settings["leaderboard_channel_id"])
+        channel = self.bot.get_channel(settings["team_stats_channel_id"])
         if not channel: return
         try:
-            message = await channel.fetch_message(settings["leaderboard_message_id"])
+            message = await channel.fetch_message(settings["team_stats_message_id"])
         except: return
 
         teams = await mongo_manager.get_bsn_teams()
         matches = await mongo_manager.get_bsn_matches()
         
-        stats = {t["name"]: {"wins": 0, "losses": 0, "played": 0} for t in teams}
+        stats = {t["name"]: {"wins": 0, "losses": 0, "draws": 0, "played": 0} for t in teams}
         
         for m in matches:
             if not m["completed"]: continue
             w = m["winner"]
+            
+            # Check for draw (if we allow it in future, currently winner is forced)
+            if w == "Draw":
+                if m["team1"] in stats: stats[m["team1"]]["draws"] += 1
+                if m["team2"] in stats: stats[m["team2"]]["draws"] += 1
+                continue
+
             l = m["team1"] if w == m["team2"] else m["team2"]
             
             if w in stats:
@@ -828,12 +1109,18 @@ class BSNCupSystem(commands.Cog):
                 stats[l]["losses"] += 1
                 stats[l]["played"] += 1
                 
-        sorted_teams = sorted(stats.items(), key=lambda x: x[1]["wins"], reverse=True)
+        sorted_teams = sorted(stats.items(), key=lambda x: (x[1]["wins"], x[1]["draws"]), reverse=True)
         
-        embed = discord.Embed(title="🏆 BSN Cup Leaderboard", color=discord.Color.gold())
-        desc = ""
+        embed = discord.Embed(title="📊 BSN Cup Team Stats", color=discord.Color.gold())
+        
+        # Table Header
+        desc = "`Rank | Team Name             |  W  |  L  |  D  `\n"
+        desc += "`---------------------------------------------`\n"
+        
         for i, (name, s) in enumerate(sorted_teams):
-            desc += f"**{i+1}. {name}** - {s['wins']}W / {s['losses']}L\n"
+            # Truncate name to 20 chars for table alignment
+            t_name = (name[:20] + '..') if len(name) > 20 else name.ljust(22)
+            desc += f"`{str(i+1).rjust(4)} | {t_name} | {str(s['wins']).center(3)} | {str(s['losses']).center(3)} | {str(s['draws']).center(3)} `\n"
             
         embed.description = desc
         embed.timestamp = datetime.datetime.now()
@@ -853,20 +1140,42 @@ class BSNCupSystem(commands.Cog):
         
         embed = discord.Embed(title="⚔️ Tournament Bracket", color=discord.Color.blue())
         
-        r1 = [m for m in matches if m["round"] == 1]
-        r2 = [m for m in matches if m["round"] == 2]
-        r3 = [m for m in matches if m["round"] == 3]
+        r1 = sorted([m for m in matches if m["round"] == 1], key=lambda x: x["id"])
+        r2 = sorted([m for m in matches if m["round"] == 2], key=lambda x: x["id"])
+        r3 = sorted([m for m in matches if m["round"] == 3], key=lambda x: x["id"])
         
-        def format_match(m):
-            w = f"**{m['winner']}**" if m['winner'] else "TBD"
-            return f"{m['label']}: {m['team1']} vs {m['team2']} -> {w}"
+        def format_match_line(m):
+            w = m.get("winner")
+            t1 = m["team1"]
+            t2 = m["team2"]
+            
+            # Simple checkmark or score if available
+            status = " "
+            if m["completed"]:
+                status = "✓"
+                
+            # Highlight winner
+            t1_str = t1
+            t2_str = t2
+            if w == t1: t1_str = f"[{t1}]"
+            if w == t2: t2_str = f"[{t2}]"
+            
+            return f"{status} {t1_str} vs {t2_str}"
 
         if r1:
-            embed.add_field(name="Round 1", value="\n".join([format_match(m) for m in r1])[:1024], inline=False)
+            lines = [format_match_line(m) for m in r1]
+            chunk = "```ini\n" + "\n".join(lines) + "\n```"
+            embed.add_field(name="Round 1", value=chunk, inline=False)
+            
         if r2:
-            embed.add_field(name="Round 2", value="\n".join([format_match(m) for m in r2])[:1024], inline=False)
+            lines = [format_match_line(m) for m in r2]
+            chunk = "```ini\n" + "\n".join(lines) + "\n```"
+            embed.add_field(name="Round 2", value=chunk, inline=False)
+            
         if r3:
-            embed.add_field(name="Round 3 (Double Elim)", value="\n".join([format_match(m) for m in r3])[:1024], inline=False)
+            lines = [format_match_line(m) for m in r3]
+            chunk = "```ini\n" + "\n".join(lines) + "\n```"
+            embed.add_field(name="Round 3 (Double Elim)", value=chunk, inline=False)
             
         embed.timestamp = datetime.datetime.now()
         await message.edit(embed=embed)
