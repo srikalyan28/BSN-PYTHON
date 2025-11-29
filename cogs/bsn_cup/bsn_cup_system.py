@@ -405,54 +405,6 @@ class BSNManageMatchesView(discord.ui.View):
                 "team1": t1["name"],
                 "team2": t2["name"],
                 "round": 1,
-                "completed": False,
-                "winner": None
-            }
-            generated.append(match_data)
-            await mongo_manager.save_bsn_match(match_data)
-            
-        await interaction.followup.send(f"✅ Generated {len(generated)} matches for Round 1.", ephemeral=True)
-
-    @discord.ui.button(label="Generate Round 2 (Single Elim)", style=discord.ButtonStyle.primary, custom_id="bsn_gen_r2")
-    async def gen_r2(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        matches = await mongo_manager.get_bsn_matches()
-        r1_matches = [m for m in matches if m["round"] == 1]
-        
-        if not all(m["completed"] for m in r1_matches):
-            await interaction.followup.send("❌ Round 1 is not complete yet.", ephemeral=True)
-            return
-            
-        winners = [m["winner"] for m in r1_matches if m["winner"]]
-        if len(winners) < 2:
-             await interaction.followup.send("❌ Not enough winners to generate Round 2.", ephemeral=True)
-             return
-             
-        generated = []
-        for i in range(0, len(winners), 2):
-            if i + 1 >= len(winners): break
-            t1 = winners[i]
-            t2 = winners[i+1]
-            
-            match_id = f"R2_M{i//2 + 1}"
-            match_data = {
-                "id": match_id,
-                "label": f"Round 2 - Match {i//2 + 1}",
-                "team1": t1,
-                "team2": t2,
-                "round": 2,
-                "completed": False,
-                "winner": None
-            }
-            generated.append(match_data)
-            await mongo_manager.save_bsn_match(match_data)
-            
-        await interaction.followup.send(f"✅ Generated {len(generated)} matches for Round 2.", ephemeral=True)
-
-    @discord.ui.button(label="Generate Round 3 (Double Elim)", style=discord.ButtonStyle.primary, custom_id="bsn_gen_r3")
-    async def gen_r3(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        matches = await mongo_manager.get_bsn_matches()
         r2_matches = [m for m in matches if m["round"] == 2]
         
         if not all(m["completed"] for m in r2_matches):
@@ -489,7 +441,16 @@ class BSNManageMatchesView(discord.ui.View):
         await mongo_manager.save_bsn_match(m1)
         await mongo_manager.save_bsn_match(m2)
         
-        await interaction.followup.send("✅ Generated Double Elimination Bracket (Upper Semis). Lower bracket matches will generate automatically as results come in.", ephemeral=True)
+        await mongo_manager.save_bsn_match(m1)
+        await mongo_manager.save_bsn_match(m2)
+        
+        # Create Threads
+        cog = interaction.client.get_cog("BSNCupSystem")
+        if cog:
+            await cog.create_match_thread(m1)
+            await cog.create_match_thread(m2)
+        
+        await interaction.followup.send("✅ Generated Double Elimination Bracket (Upper Semis). Threads created.", ephemeral=True)
 
     @discord.ui.button(label="Enter Result", style=discord.ButtonStyle.success, custom_id="bsn_enter_result")
     async def enter_result(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -847,7 +808,7 @@ class BSNCupSystem(commands.Cog):
                         "Click the button below to apply!",
             color=discord.Color.gold()
         )
-        embed.set_image(url="https://i.imgur.com/placeholder.png")
+        # embed.set_image(url="https://i.imgur.com/placeholder.png") # Removed as requested
         view = BSNRegistrationView()
         await interaction.response.send_message(embed=embed, view=view)
 
@@ -881,6 +842,22 @@ class BSNCupSystem(commands.Cog):
         settings["approval_channel_id"] = channel.id
         await mongo_manager.save_bsn_settings(settings)
         await interaction.response.send_message(f"✅ Approval channel set to {channel.mention}", ephemeral=True)
+
+    @app_commands.command(name="bsn_setup_negotiation", description="Set Negotiation Channel and Staff Role/User")
+    @is_owner()
+    async def bsn_setup_negotiation(self, interaction: discord.Interaction, channel: discord.TextChannel, staff: discord.Role = None, user: discord.User = None):
+        settings = await mongo_manager.get_bsn_settings() or {}
+        settings["negotiation_channel_id"] = channel.id
+        
+        ping_id = None
+        if staff: ping_id = f"&{staff.id}" # Role ping
+        elif user: ping_id = f"@{user.id}" # User ping
+        
+        settings["negotiation_ping_id"] = ping_id
+        
+        await mongo_manager.save_bsn_settings(settings)
+        ping_str = f"<@{ping_id[1:]}>" if ping_id and ping_id.startswith("@") else f"<@&{ping_id[1:]}>" if ping_id else "None"
+        await interaction.response.send_message(f"✅ Negotiation channel set to {channel.mention}. Staff Ping: {ping_str}", ephemeral=True)
 
     @app_commands.command(name="bsn_team_stats", description="Post Auto-Updating Team Stats (Leaderboard)")
     @is_owner()
@@ -1001,77 +978,64 @@ class BSNCupSystem(commands.Cog):
         if not all(m["completed"] for m in current_round_matches):
             return # Round not finished
             
-        # Generate Next Round
-        if current_round == 1:
-            # Trigger Round 2 Generation
-            # Reuse logic from BSNManageMatchesView.gen_r2 but automated
-            winners = [m["winner"] for m in current_round_matches if m["winner"]]
-            if len(winners) < 2: return
-            
-            # Sort winners by match ID to keep bracket structure? Or random?
-            # Usually bracket structure is fixed. R1_M1 vs R1_M2 etc.
-            # Current gen_r1 was random shuffle.
-            # Let's assume standard bracket: M1 vs M2, M3 vs M4...
-            # We need to sort current_round_matches by ID to ensure consistent pairing.
-            
-            # Helper to extract match number
-            def get_match_num(mid):
-                try: return int(mid.split("_M")[1])
-                except: return 0
+        # Notify that round is complete, but DO NOT auto-generate
+        settings = await mongo_manager.get_bsn_settings()
+        if settings and "bracket_channel_id" in settings:
+            ch = self.bot.get_channel(settings["bracket_channel_id"])
+            if ch: await ch.send(f"🚨 **Round {current_round} Complete!** Use the dashboard to generate the next round.")
+
+    async def create_match_thread(self, match_data):
+        settings = await mongo_manager.get_bsn_settings()
+        if not settings or "negotiation_channel_id" not in settings: return False
+        
+        channel = self.bot.get_channel(settings["negotiation_channel_id"])
+        if not channel: return False
+        
+        # Abbreviation Logic
+        def abbreviate(name):
+            if " " in name:
+                return "".join([word[0] for word in name.split() if word]).upper()
+            else:
+                return name[:2].upper()
                 
-            sorted_r1 = sorted(current_round_matches, key=lambda m: get_match_num(m["id"]))
-            winners_ordered = [m["winner"] for m in sorted_r1]
+        abbr1 = abbreviate(match_data["team1"])
+        abbr2 = abbreviate(match_data["team2"])
+        thread_name = f"{abbr1} vs {abbr2}"
+        
+        # Staff Ping
+        ping_id = settings.get("negotiation_ping_id")
+        ping_str = ""
+        if ping_id:
+            if ping_id.startswith("&"): ping_str = f"<@&{ping_id[1:]}>"
+            elif ping_id.startswith("@"): ping_str = f"<@{ping_id[1:]}>"
             
-            generated = []
-            for i in range(0, len(winners_ordered), 2):
-                if i + 1 >= len(winners_ordered): break
-                t1 = winners_ordered[i]
-                t2 = winners_ordered[i+1]
-                
-                match_id = f"R2_M{i//2 + 1}"
-                match_data = {
-                    "id": match_id,
-                    "label": f"Round 2 - Match {i//2 + 1}",
-                    "team1": t1,
-                    "team2": t2,
-                    "round": 2,
-                    "completed": False,
-                    "winner": None
-                }
-                generated.append(match_data)
-                await mongo_manager.save_bsn_match(match_data)
+        # Captain Pings (Need to fetch teams)
+        teams = await mongo_manager.get_bsn_teams()
+        t1 = next((t for t in teams if t["name"] == match_data["team1"]), None)
+        t2 = next((t for t in teams if t["name"] == match_data["team2"]), None)
+        
+        cap1_ping = f"<@{t1['captain_discord_id']}>" if t1 and "captain_discord_id" in t1 else ""
+        cap2_ping = f"<@{t2['captain_discord_id']}>" if t2 and "captain_discord_id" in t2 else ""
+        
+        content = f"🏆 **Match Created: {match_data['label']}**\n**{match_data['team1']}** vs **{match_data['team2']}**\n\n{ping_str} {cap1_ping} {cap2_ping}\nPlease arrange your match here."
+        
+        try:
+            # Create Private Thread (type=12 is private thread, but needs Guild Premium tier 2 or something? 
+            # Actually standard private threads are type 12. 
+            # channel.create_thread(name=..., type=discord.ChannelType.private_thread)
+            # Note: create_thread on TextChannel with type=private requires 'USE_PRIVATE_THREADS' permission.
+            # If not possible, maybe public thread? User asked for private.
             
-            if generated:
-                settings = await mongo_manager.get_bsn_settings()
-                if settings and "bracket_channel_id" in settings:
-                    ch = self.bot.get_channel(settings["bracket_channel_id"])
-                    if ch: await ch.send(f"🚨 **Round 1 Complete!** Round 2 Matches have been generated!")
-                    
-        elif current_round == 2:
-            # Trigger Round 3 (Double Elim Start)
-            # Reuse logic from gen_r3
-            sorted_r2 = sorted(current_round_matches, key=lambda m: get_match_num(m["id"]))
-            winners = [m["winner"] for m in sorted_r2]
+            thread = await channel.create_thread(name=thread_name, type=discord.ChannelType.private_thread, auto_archive_duration=1440)
+            await thread.send(content)
             
-            if len(winners) != 4: return # Need exactly 4 for semis
-            
-            m1 = {
-                "id": "DE_UB_SF1", "label": "Upper Bracket Semi 1",
-                "team1": winners[0], "team2": winners[1],
-                "round": 3, "bracket": "upper", "completed": False, "winner": None
-            }
-            m2 = {
-                "id": "DE_UB_SF2", "label": "Upper Bracket Semi 2",
-                "team1": winners[2], "team2": winners[3],
-                "round": 3, "bracket": "upper", "completed": False, "winner": None
-            }
-            await mongo_manager.save_bsn_match(m1)
-            await mongo_manager.save_bsn_match(m2)
-            
-            settings = await mongo_manager.get_bsn_settings()
-            if settings and "bracket_channel_id" in settings:
-                ch = self.bot.get_channel(settings["bracket_channel_id"])
-                if ch: await ch.send(f"🚨 **Round 2 Complete!** Double Elimination Bracket Started!")
+            # Save thread ID to match
+            match_data["thread_id"] = thread.id
+            await mongo_manager.save_bsn_match(match_data)
+            return True
+        except Exception as e:
+            print(f"Failed to create thread for {match_data['id']}: {e}")
+            return False
 
     # --- Helpers ---
 
