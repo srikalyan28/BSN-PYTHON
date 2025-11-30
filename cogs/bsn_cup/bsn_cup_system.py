@@ -559,6 +559,98 @@ class BSNManageMatchesView(discord.ui.View):
             await mongo_manager.save_bsn_match(match_data)
             
         # Create Threads
+        cog = interaction.client.get_cog("BSNCupSystem")
+        if cog:
+            count = 0
+            for m in generated:
+                if await cog.create_match_thread(m): count += 1
+            await cog.update_bracket() # Auto-update bracket
+            await interaction.followup.send(f"✅ Generated {len(generated)} matches for Round {next_round}. Created {count} threads.", ephemeral=True)
+
+    @discord.ui.button(label="Generate Page Playoff (Top 4)", style=discord.ButtonStyle.primary, custom_id="bsn_gen_pp")
+    async def gen_pp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        
+        # 1. Check previous round
+        matches = await mongo_manager.get_bsn_matches()
+        if matches:
+            max_round = max([m["round"] for m in matches])
+            active_round_matches = [m for m in matches if m["round"] == max_round]
+            if not all(m["completed"] for m in active_round_matches):
+                await interaction.followup.send(f"❌ Round {max_round} is not complete yet.", ephemeral=True)
+                return
+            next_round = max_round + 1
+        else:
+            await interaction.followup.send("❌ No matches found. Cannot start Page Playoff.", ephemeral=True)
+            return
+
+        # 2. Eliminate losers from previous round first
+        teams = await mongo_manager.get_bsn_teams()
+        prev_round_matches = [m for m in matches if m["round"] == next_round - 1]
+        losers = []
+        for m in prev_round_matches:
+            if m["winner"]:
+                loser = m["team1"] if m["winner"] == m["team2"] else m["team2"]
+                losers.append(loser)
+        
+        for t in teams:
+            if t["name"] in losers:
+                t["eliminated"] = True
+                await mongo_manager.save_bsn_team(t)
+
+        # 3. Select Top 4 Active Teams based on Leaderboard
+        active_teams = [t for t in teams if not t.get("eliminated")]
+        
+        # Calculate stats for sorting
+        stats = {t["name"]: {"wins": 0, "total_stars": 0, "total_perc": 0.0} for t in active_teams}
+        for m in matches:
+            if not m["completed"]: continue
+            t1, t2 = m["team1"], m["team2"]
+            if t1 in stats:
+                stats[t1]["total_stars"] += m.get("team1_total_stars", 0)
+                stats[t1]["total_perc"] += m.get("team1_total_perc", 0.0)
+            if t2 in stats:
+                stats[t2]["total_stars"] += m.get("team2_total_stars", 0)
+                stats[t2]["total_perc"] += m.get("team2_total_perc", 0.0)
+            
+            w = m["winner"]
+            if w in stats: stats[w]["wins"] += 1
+
+        # Sort: Wins -> Stars -> Perc
+        sorted_active = sorted(
+            active_teams,
+            key=lambda t: (
+                stats[t["name"]]["wins"],
+                stats[t["name"]]["total_stars"],
+                stats[t["name"]]["total_perc"]
+            ),
+            reverse=True
+        )
+
+        if len(sorted_active) < 4:
+            await interaction.followup.send(f"❌ Need at least 4 active teams for Page Playoff (Found {len(sorted_active)}).", ephemeral=True)
+            return
+
+        top_4 = sorted_active[:4]
+        
+        # Eliminate anyone else (Rank 5+)
+        for t in sorted_active[4:]:
+            t["eliminated"] = True
+            await mongo_manager.save_bsn_team(t)
+            
+        # 4. Generate Page Playoff Bracket
+        # Rank 1 vs Rank 2 (Qualifier 1)
+        q1 = {
+            "id": "PP_Q1",
+            "label": "Qualifier 1 (Rank 1 vs 2)",
+            "team1": top_4[0]["name"],
+            "team2": top_4[1]["name"],
+            "round": next_round,
+            "bracket": "page_playoff",
+            "completed": False,
+            "winner": None
+        }
+        
         # Rank 3 vs Rank 4 (Eliminator 1)
         e1 = {
             "id": "PP_E1",
