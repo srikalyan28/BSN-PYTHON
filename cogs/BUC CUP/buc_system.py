@@ -398,15 +398,17 @@ class BUCSystem(commands.Cog):
     async def buc_teams(self, interaction: discord.Interaction):
         # Public command
              
-        teams = await mongo_manager.get_buc_teams()
-        if not teams:
-            await interaction.response.send_message("No teams registered yet.", ephemeral=True)
-            return
-# 🟢 NEW: sort by 'order' (BlackSpire Nation has order = 1)
-    teams = sorted(teams, key=lambda t: t.get("order", 9999))
+       teams = await mongo_manager.get_buc_teams()
+if not teams:
+    await interaction.response.send_message("No teams registered yet.", ephemeral=True)
+    return
 
-        options = [discord.SelectOption(label=t["name"], value=t["name"]) for t in teams]
-        view = TeamListView()
+# 🟢 NEW: sort by 'order' (BlackSpire Nation has order = 1)
+teams = sorted(teams, key=lambda t: t.get("order", 9999))
+
+options = [discord.SelectOption(label=t["name"], value=t["name"]) for t in teams]
+view = TeamListView()
+
         # We need to populate the select menu dynamically?
         # Persistent views must have static items usually, or we update them.
         # But for Team List, teams change.
