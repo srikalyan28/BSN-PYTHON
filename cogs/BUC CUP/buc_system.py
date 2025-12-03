@@ -402,6 +402,8 @@ class BUCSystem(commands.Cog):
         if not teams:
             await interaction.response.send_message("No teams registered yet.", ephemeral=True)
             return
+# 🟢 NEW: sort by 'order' (BlackSpire Nation has order = 1)
+    teams = sorted(teams, key=lambda t: t.get("order", 9999))
 
         options = [discord.SelectOption(label=t["name"], value=t["name"]) for t in teams]
         view = TeamListView()
