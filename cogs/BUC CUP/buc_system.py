@@ -394,33 +394,31 @@ class BUCSystem(commands.Cog):
         await mongo_manager.save_buc_settings(current_settings)
         await self.update_player_stats()
 
-        @app_commands.command(name="buc_teams", description="View Registered Teams and Rosters")
+    @app_commands.command(name="buc_teams", description="View Registered Teams and Rosters")
     async def buc_teams(self, interaction: discord.Interaction):
         # Public command
-
+             
         teams = await mongo_manager.get_buc_teams()
         if not teams:
             await interaction.response.send_message("No teams registered yet.", ephemeral=True)
             return
-
-        # 🟢 NEW: sort by 'order' (Blackspire Nation has order = 1)
-        teams = sorted(teams, key=lambda t: t.get("order", 9999))
-
         options = [discord.SelectOption(label=t["name"], value=t["name"]) for t in teams]
         view = TeamListView()
-
+        # We need to populate the select menu dynamically?
+        # Persistent views must have static items usually, or we update them.
+        # But for Team List, teams change.
+        # So we should update the view's item before sending.
+        # BUT, if we update the item, the custom_id remains same.
+        # The persistent view callback will handle it.
+        # Wait, if we instantiate TeamListView(), it has the default items defined in class.
+        # We need to update the options of the select menu in the instance.
+        
         # Find the select item
         select = [x for x in view.children if isinstance(x, discord.ui.Select)][0]
         select.options = options[:25]
-
-        embed = discord.Embed(
-            title="🛡️ Registered Teams",
-            description=f"Total Teams: {len(teams)}\nSelect a team below to view full roster.",
-            color=discord.Color.blue()
-        )
-
+        
+        embed = discord.Embed(title="🛡️ Registered Teams", description=f"Total Teams: {len(teams)}\nSelect a team below to view full roster.", color=discord.Color.blue())
         await interaction.response.send_message(embed=embed, view=view)
-
 
 class RegistrationView(discord.ui.View):
     def __init__(self):
