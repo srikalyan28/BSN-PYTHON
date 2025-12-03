@@ -1132,7 +1132,7 @@ class BSNCupSystem(commands.Cog):
         ping_str = f"<@{ping_id[1:]}>" if ping_id and ping_id.startswith("@") else f"<@&{ping_id[1:]}>" if ping_id else "None"
         await interaction.response.send_message(f"✅ Negotiation channel set to {channel.mention}. Staff Ping: {ping_str}", ephemeral=True)
 
-    @app_commands.command(name="bsn_team_stats", description="Post Auto-Updating Team Stats (Leaderboard)")
+    @app_commands.command(name="bsn_team_stats", description="Post Auto-Updating Team Stats (PC View)")
     @is_owner()
     async def bsn_team_stats(self, interaction: discord.Interaction):
         embed = discord.Embed(title="📊 BSN Cup Team Stats", description="Initializing...", color=discord.Color.gold())
@@ -1142,6 +1142,19 @@ class BSNCupSystem(commands.Cog):
         settings = await mongo_manager.get_bsn_settings() or {}
         settings["team_stats_channel_id"] = msg.channel.id
         settings["team_stats_message_id"] = msg.id
+        await mongo_manager.save_bsn_settings(settings)
+        await self.update_team_stats()
+
+    @app_commands.command(name="bsn_team_stats_mobile", description="Post Auto-Updating Team Stats (Mobile View)")
+    @is_owner()
+    async def bsn_team_stats_mobile(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="📊 BSN Cup Team Stats [Mobile]", description="Initializing...", color=discord.Color.gold())
+        await interaction.response.send_message(embed=embed)
+        msg = await interaction.original_response()
+        
+        settings = await mongo_manager.get_bsn_settings() or {}
+        settings["team_stats_mobile_channel_id"] = msg.channel.id
+        settings["team_stats_mobile_message_id"] = msg.id
         await mongo_manager.save_bsn_settings(settings)
         await self.update_team_stats()
 
@@ -1192,7 +1205,7 @@ class BSNCupSystem(commands.Cog):
         embed = await view.get_embed(pages, labels, 0)
         await interaction.response.send_message(embed=embed, view=view)
 
-    @app_commands.command(name="bsn_player_stats", description="Setup Auto-Updating Player Stats Leaderboard")
+    @app_commands.command(name="bsn_player_stats", description="Setup Auto-Updating Player Stats Leaderboard (PC View)")
     @is_owner()
     async def bsn_player_stats(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🌟 BSN Cup Player Stats", description="Initializing...", color=discord.Color.purple())
@@ -1205,7 +1218,20 @@ class BSNCupSystem(commands.Cog):
         await mongo_manager.save_bsn_settings(settings)
         await self.update_player_stats()
 
-    async def _generate_player_stats_embed(self, matches, teams):
+    @app_commands.command(name="bsn_player_stats_mobile", description="Setup Auto-Updating Player Stats Leaderboard (Mobile View)")
+    @is_owner()
+    async def bsn_player_stats_mobile(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="🌟 BSN Cup Player Stats [Mobile]", description="Initializing...", color=discord.Color.purple())
+        await interaction.response.send_message(embed=embed)
+        msg = await interaction.original_response()
+        
+        settings = await mongo_manager.get_bsn_settings() or {}
+        settings["player_stats_mobile_channel_id"] = msg.channel.id
+        settings["player_stats_mobile_message_id"] = msg.id
+        await mongo_manager.save_bsn_settings(settings)
+        await self.update_player_stats()
+
+    async def _generate_player_stats_embed(self, matches, teams, mobile=False):
         player_stats = {} # tag -> {name, stars, perc, played}
         
         for m in matches:
@@ -1239,16 +1265,30 @@ class BSNCupSystem(commands.Cog):
         # Sort by Stars -> Perc
         sorted_stats = sorted(player_stats.values(), key=lambda x: (x["stars"], x["perc"]), reverse=True)
         
-        embed = discord.Embed(title="🌟 BSN Cup Player Stats", color=discord.Color.purple())
+        title = "🌟 BSN Cup Player Stats" + (" [Mobile]" if mobile else "")
+        embed = discord.Embed(title=title, color=discord.Color.purple())
         
-        desc = "`Rank | Player Name         | Stars |   %   | M `\n"
-        desc += "`-----------------------------------------------`\n"
-        
-        for i, s in enumerate(sorted_stats[:25]): # Top 25
-            p_name = (s['name'][:18] + '..') if len(s['name']) > 18 else s['name'].ljust(20)
-            desc += f"`{str(i+1).rjust(4)} | {p_name} | {str(s['stars']).center(5)} | {str(int(s['perc'])).center(5)} | {str(s['played']).center(2)}`\n"
+        if mobile:
+            # Mobile Format
+            # Rk Player        ★   %  M
+            header = f"{'Rk':<3} {'Player':<13} {'★':<3} {'%':<3} {'M':<2}"
+            rows = []
+            for i, s in enumerate(sorted_stats[:25]): # Top 25
+                rank = i + 1
+                p_name = (s['name'][:11] + '..') if len(s['name']) > 13 else s['name']
+                row = f"#{rank:<2} {p_name:<13} {s['stars']:<3} {int(s['perc']):>3.0f} {s['played']:<2}"
+                rows.append(row)
+            table = "\n".join([header] + rows)
+            embed.description = f"```text\n{table}\n```"
+        else:
+            # PC Format
+            desc = "`Rank | Player Name         | Stars |   %   | M `\n"
+            desc += "`-----------------------------------------------`\n"
+            for i, s in enumerate(sorted_stats[:25]): # Top 25
+                p_name = (s['name'][:18] + '..') if len(s['name']) > 18 else s['name'].ljust(20)
+                desc += f"`{str(i+1).rjust(4)} | {p_name} | {str(s['stars']).center(5)} | {str(int(s['perc'])).center(5)} | {str(s['played']).center(2)}`\n"
+            embed.description = desc
             
-        embed.description = desc
         embed.set_footer(text="Auto-Updating Leaderboard • Top 25 Players")
         embed.timestamp = datetime.datetime.now()
         return embed
@@ -1256,32 +1296,34 @@ class BSNCupSystem(commands.Cog):
     async def update_player_stats(self):
         print("DEBUG: update_player_stats called")
         settings = await mongo_manager.get_bsn_settings()
-        if not settings or "player_stats_channel_id" not in settings: 
+        if not settings: 
             print("DEBUG: No player stats settings found")
             return
         
-        channel = self.bot.get_channel(settings["player_stats_channel_id"])
-        if not channel: 
-            print(f"DEBUG: Player stats channel {settings['player_stats_channel_id']} not found")
-            return
-        try:
-            message = await channel.fetch_message(settings["player_stats_message_id"])
-        except Exception as e: 
-            print(f"DEBUG: Could not fetch player stats message: {e}")
-            return
-
         matches = await mongo_manager.get_bsn_matches()
         teams = await mongo_manager.get_bsn_teams()
         
-        try:
-            embed = await self._generate_player_stats_embed(matches, teams)
-            if embed:
-                await message.edit(embed=embed)
-                print("DEBUG: Player stats message updated successfully")
-        except Exception as e:
-            print(f"DEBUG: Error updating player stats embed: {e}")
-            import traceback
-            traceback.print_exc()
+        # --- Update PC Player Stats ---
+        if "player_stats_channel_id" in settings and "player_stats_message_id" in settings:
+            try:
+                channel = self.bot.get_channel(settings["player_stats_channel_id"])
+                if channel:
+                    msg = await channel.fetch_message(settings["player_stats_message_id"])
+                    embed = await self._generate_player_stats_embed(matches, teams, mobile=False)
+                    if embed: await msg.edit(embed=embed)
+            except Exception as e:
+                print(f"DEBUG: Failed to update PC player stats: {e}")
+
+        # --- Update Mobile Player Stats ---
+        if "player_stats_mobile_channel_id" in settings and "player_stats_mobile_message_id" in settings:
+            try:
+                channel = self.bot.get_channel(settings["player_stats_mobile_channel_id"])
+                if channel:
+                    msg = await channel.fetch_message(settings["player_stats_mobile_message_id"])
+                    embed = await self._generate_player_stats_embed(matches, teams, mobile=True)
+                    if embed: await msg.edit(embed=embed)
+            except Exception as e:
+                print(f"DEBUG: Failed to update Mobile player stats: {e}")
 
     # --- Auto-Progression Helper ---
     async def check_and_generate_next_round(self, current_round):
@@ -1355,20 +1397,10 @@ class BSNCupSystem(commands.Cog):
     async def update_team_stats(self):
         print("DEBUG: update_team_stats called")
         settings = await mongo_manager.get_bsn_settings()
-        if not settings or "team_stats_channel_id" not in settings: 
-            print("DEBUG: No team stats settings found")
+        if not settings: 
+            print("DEBUG: No settings found")
             return
         
-        channel = self.bot.get_channel(settings["team_stats_channel_id"])
-        if not channel: 
-            print("DEBUG: Team stats channel not found")
-            return
-        try:
-            message = await channel.fetch_message(settings["team_stats_message_id"])
-        except Exception as e: 
-            print(f"DEBUG: Could not fetch team stats message: {e}")
-            return
-
         teams = await mongo_manager.get_bsn_teams()
         matches = await mongo_manager.get_bsn_matches()
         
@@ -1418,10 +1450,59 @@ class BSNCupSystem(commands.Cog):
                 reverse=True
             )
 
-            # 4. Generate Embed
+            # --- Update PC Team Stats ---
+            if "team_stats_channel_id" in settings and "team_stats_message_id" in settings:
+                try:
+                    channel = self.bot.get_channel(settings["team_stats_channel_id"])
+                    if channel:
+                        msg = await channel.fetch_message(settings["team_stats_message_id"])
+                        embed = self._generate_team_stats_embed(sorted_teams, teams, mobile=False)
+                        await msg.edit(embed=embed)
+                except Exception as e:
+                    print(f"DEBUG: Failed to update PC team stats: {e}")
+
+            # --- Update Mobile Team Stats ---
+            if "team_stats_mobile_channel_id" in settings and "team_stats_mobile_message_id" in settings:
+                try:
+                    channel = self.bot.get_channel(settings["team_stats_mobile_channel_id"])
+                    if channel:
+                        msg = await channel.fetch_message(settings["team_stats_mobile_message_id"])
+                        embed = self._generate_team_stats_embed(sorted_teams, teams, mobile=True)
+                        await msg.edit(embed=embed)
+                except Exception as e:
+                    print(f"DEBUG: Failed to update Mobile team stats: {e}")
+            
+            print("DEBUG: Team stats updated successfully")
+            
+        except Exception as e:
+            print(f"DEBUG: Error in update_team_stats loop: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _generate_team_stats_embed(self, sorted_teams, teams, mobile=False):
+        title = "🏆 BSN Cup Team Leaderboard" + (" [Mobile]" if mobile else "")
+        embed = discord.Embed(title=title, color=discord.Color.gold())
+        
+        if mobile:
+            # Mobile Format
+            # Rk Team          W L ★   %
+            header = f"{'Rk':<3} {'Team':<13} {'W':<1} {'L':<1} {'★':<3} {'%':<3}"
+            rows = []
+            rank = 1
+            for name, s in sorted_teams:
+                team = next((t for t in teams if t["name"] == name), None)
+                if team and team.get("eliminated"): continue
+                
+                t_name = (name[:11] + '..') if len(name) > 13 else name
+                row = f"#{rank:<2} {t_name:<13} {s['wins']:<1} {s['losses']:<1} {s['total_stars']:<3} {int(s['total_perc']):>3.0f}"
+                rows.append(row)
+                rank += 1
+            table = "\n".join([header] + rows)
+            embed.description = f"```text\n{table}\n```"
+        else:
+            # PC Format
             desc = "`Rank | Team Name           | W   | L   | Stars | Perc `\n"
             desc += "`-----------------------------------------------------`\n"
-            
             rank = 1
             for name, s in sorted_teams:
                 team = next((t for t in teams if t["name"] == name), None)
@@ -1433,16 +1514,10 @@ class BSNCupSystem(commands.Cog):
                 
                 desc += f"`{str(rank).rjust(4)} | {t_name} | {str(s['wins']).center(3)} | {str(s['losses']).center(3)} | {stars} | {perc} `\n"
                 rank += 1
-                
-            embed = discord.Embed(title="🏆 BSN Cup Team Leaderboard", description=desc, color=discord.Color.gold())
-            embed.timestamp = datetime.datetime.now()
-            await message.edit(embed=embed)
-            print("DEBUG: Team stats updated successfully")
+            embed.description = desc
             
-        except Exception as e:
-            print(f"DEBUG: Error in update_team_stats loop: {e}")
-            import traceback
-            traceback.print_exc()
+        embed.timestamp = datetime.datetime.now()
+        return embed
 
     async def update_bracket(self):
         settings = await mongo_manager.get_bsn_settings()

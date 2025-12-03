@@ -113,32 +113,61 @@ class BUCSystem(commands.Cog):
         # Sort by Points, then Total Percentage
         sorted_teams = sorted(team_stats.items(), key=lambda x: (x[1]["points"], x[1]["total_percent"]), reverse=True)
 
-        embed = discord.Embed(title="🏆 BUC CUP Leaderboard (Round 1)", color=discord.Color.gold())
-        
-        # Code Block Table
-        # Rank | Team | P | W | L | T | Pts | %
-        header = f"{'Rank':<4} | {'Team':<15} | {'P':<2} | {'W':<2} | {'L':<2} | {'T':<2} | {'Pts':<3} | {'Total %':<7}"
-        separator = "-" * len(header)
-        rows = []
-        
-        for i, (name, stats) in enumerate(sorted_teams):
-            rank = i + 1
-            # Truncate team name if too long
-            t_name = (name[:13] + "..") if len(name) > 15 else name
-            
-            # Display Total Percent (Sum of all player percentages across all matches)
-            # match.percent1 is avg of 5 players. So total_percent is sum of avgs.
-            # To get sum of all players, multiply by 5.
-            display_percent = stats['total_percent'] * 5
-            
-            row = f"#{rank:<3} | {t_name:<15} | {stats['played']:<2} | {stats['wins']:<2} | {stats['losses']:<2} | {stats['ties']:<2} | {stats['points']:<3} | {display_percent:>7.2f}"
-            rows.append(row)
+        # --- Update PC Leaderboard ---
+        if "leaderboard_channel_id" in settings and "leaderboard_message_id" in settings:
+            try:
+                channel = self.bot.get_channel(settings["leaderboard_channel_id"])
+                if channel:
+                    msg = await channel.fetch_message(settings["leaderboard_message_id"])
+                    embed = self._generate_leaderboard_embed(sorted_teams, mobile=False)
+                    await msg.edit(embed=embed)
+            except Exception as e:
+                print(f"Failed to update PC leaderboard: {e}")
 
-        table = "\n".join([header, separator] + rows)
-        embed.description = f"```text\n{table}\n```\nTop 4 qualify for Round 2 (Page Playoff) 🟢"
-        embed.timestamp = datetime.datetime.now()
+        # --- Update Mobile Leaderboard ---
+        if "leaderboard_mobile_channel_id" in settings and "leaderboard_mobile_message_id" in settings:
+            try:
+                channel = self.bot.get_channel(settings["leaderboard_mobile_channel_id"])
+                if channel:
+                    msg = await channel.fetch_message(settings["leaderboard_mobile_message_id"])
+                    embed = self._generate_leaderboard_embed(sorted_teams, mobile=True)
+                    await msg.edit(embed=embed)
+            except Exception as e:
+                print(f"Failed to update Mobile leaderboard: {e}")
+
+    def _generate_leaderboard_embed(self, sorted_teams, mobile=False):
+        title = "🏆 BUC CUP Leaderboard (Round 1)" + (" [Mobile]" if mobile else "")
+        embed = discord.Embed(title=title, color=discord.Color.gold())
         
-        await message.edit(embed=embed)
+        rows = []
+        if mobile:
+            # Mobile Format
+            # Rk Team          P W L Pt %
+            header = f"{'Rk':<3} {'Team':<13} {'P':<1} {'W':<1} {'L':<1} {'Pt':<2} {'%':<3}"
+            for i, (name, stats) in enumerate(sorted_teams):
+                rank = i + 1
+                t_name = (name[:11] + "..") if len(name) > 13 else name
+                display_percent = stats['total_percent'] * 5
+                row = f"#{rank:<2} {t_name:<13} {stats['played']:<1} {stats['wins']:<1} {stats['losses']:<1} {stats['points']:<2} {display_percent:>3.0f}"
+                rows.append(row)
+            table = "\n".join([header] + rows)
+            embed.description = f"```text\n{table}\n```\nTop 4 qualify for Round 2 (Page Playoff) 🟢"
+        else:
+            # PC Format
+            # Rank | Team | P | W | L | T | Pts | %
+            header = f"{'Rank':<4} | {'Team':<15} | {'P':<2} | {'W':<2} | {'L':<2} | {'T':<2} | {'Pts':<3} | {'Total %':<7}"
+            separator = "-" * len(header)
+            for i, (name, stats) in enumerate(sorted_teams):
+                rank = i + 1
+                t_name = (name[:13] + "..") if len(name) > 15 else name
+                display_percent = stats['total_percent'] * 5
+                row = f"#{rank:<3} | {t_name:<15} | {stats['played']:<2} | {stats['wins']:<2} | {stats['losses']:<2} | {stats['ties']:<2} | {stats['points']:<3} | {display_percent:>7.2f}"
+                rows.append(row)
+            table = "\n".join([header, separator] + rows)
+            embed.description = f"```text\n{table}\n```\nTop 4 qualify for Round 2 (Page Playoff) 🟢"
+            
+        embed.timestamp = datetime.datetime.now()
+        return embed
 
     # --- Helper: Update Bracket ---
     async def update_bracket(self):
@@ -267,34 +296,60 @@ class BUCSystem(commands.Cog):
         # Sort by Stars (desc), Avg % (desc)
         sorted_players = sorted(results, key=lambda x: (x["stars"], x["avg_percent"]), reverse=True)
         
-        embed = discord.Embed(title="🌟 BUC CUP Player Leaderboard", description="Ranking by Tournament Performance", color=discord.Color.purple())
+        # --- Update PC Player Stats ---
+        if "player_stats_channel_id" in settings and "player_stats_message_id" in settings:
+            try:
+                channel = self.bot.get_channel(settings["player_stats_channel_id"])
+                if channel:
+                    msg = await channel.fetch_message(settings["player_stats_message_id"])
+                    embed = self._generate_player_stats_embed(sorted_players, mobile=False)
+                    await msg.edit(embed=embed)
+            except Exception as e:
+                print(f"Failed to update PC player stats: {e}")
+
+        # --- Update Mobile Player Stats ---
+        if "player_stats_mobile_channel_id" in settings and "player_stats_mobile_message_id" in settings:
+            try:
+                channel = self.bot.get_channel(settings["player_stats_mobile_channel_id"])
+                if channel:
+                    msg = await channel.fetch_message(settings["player_stats_mobile_message_id"])
+                    embed = self._generate_player_stats_embed(sorted_players, mobile=True)
+                    await msg.edit(embed=embed)
+            except Exception as e:
+                print(f"Failed to update Mobile player stats: {e}")
+
+    def _generate_player_stats_embed(self, sorted_players, mobile=False):
+        title = "🌟 BUC CUP Player Leaderboard" + (" [Mobile]" if mobile else "")
+        embed = discord.Embed(title=title, description="Ranking by Tournament Performance", color=discord.Color.purple())
         
-        # Pagination logic needed if many players.
-        # For the auto-updating message, we can only show Top X (e.g. 20).
-        # User asked for "pager format in all".
-        # But this is an auto-updating message, not a command response.
-        # We can't easily paginate an auto-updating message unless we add buttons to it.
-        # Adding buttons to the persistent message is possible.
-        # But for now, let's show Top 15 in Code Block.
-        
-        header = f"{'Rank':<4} | {'Player':<15} | {'Team':<10} | {'Stars':<5} | {'Avg %':<6}"
-        separator = "-" * len(header)
         rows = []
-        
-        for i, p in enumerate(sorted_players[:20]):
-            rank = i + 1
-            # Truncate name to 13 chars
-            p_name = (p["name"][:11] + "..") if len(p["name"]) > 13 else p["name"]
-            t_name = (p["team"][:8] + "..") if len(p["team"]) > 10 else p["team"]
-            row = f"#{rank:<3} | {p_name:<15} | {t_name:<10} | {p['stars']:<5} | {p['avg_percent']:>6.2f}"
-            rows.append(row)
+        if mobile:
+            # Mobile Format
+            # Rk Player        Tm   ★  %
+            header = f"{'Rk':<3} {'Player':<13} {'Tm':<4} {'★':<2} {'%':<3}"
+            for i, p in enumerate(sorted_players[:20]):
+                rank = i + 1
+                p_name = (p["name"][:11] + "..") if len(p["name"]) > 13 else p["name"]
+                t_name = (p["team"][:2] + "..") if len(p["team"]) > 4 else p["team"]
+                row = f"#{rank:<2} {p_name:<13} {t_name:<4} {p['stars']:<2} {p['avg_percent']:>3.0f}"
+                rows.append(row)
+            table = "\n".join([header] + rows)
+        else:
+            # PC Format
+            header = f"{'Rank':<4} | {'Player':<15} | {'Team':<10} | {'Stars':<5} | {'Avg %':<6}"
+            separator = "-" * len(header)
+            for i, p in enumerate(sorted_players[:20]):
+                rank = i + 1
+                p_name = (p["name"][:11] + "..") if len(p["name"]) > 13 else p["name"]
+                t_name = (p["team"][:8] + "..") if len(p["team"]) > 10 else p["team"]
+                row = f"#{rank:<3} | {p_name:<15} | {t_name:<10} | {p['stars']:<5} | {p['avg_percent']:>6.2f}"
+                rows.append(row)
+            table = "\n".join([header, separator] + rows)
             
-        table = "\n".join([header, separator] + rows)
         embed.description = f"```text\n{table}\n```"
         embed.set_footer(text="Showing Top 20 Players")
         embed.timestamp = datetime.datetime.now()
-        
-        await message.edit(embed=embed)
+        return embed
 
     # --- Commands ---
 
@@ -328,14 +383,27 @@ class BUCSystem(commands.Cog):
         view = DashboardView()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
 
-    @app_commands.command(name="buc_leaderboard", description="Post the Auto-Updating Leaderboard")
+    @app_commands.command(name="buc_leaderboard", description="Post the Auto-Updating Leaderboard (PC View)")
     @is_owner()
     async def buc_leaderboard(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🏆 BUC CUP Leaderboard", description="Initializing...", color=discord.Color.gold())
         await interaction.response.send_message(embed=embed)
         message = await interaction.original_response()
         
-        settings = {"leaderboard_channel_id": message.channel.id, "leaderboard_message_id": message.id}
+        settings = await mongo_manager.get_buc_settings() or {}
+        settings.update({"leaderboard_channel_id": message.channel.id, "leaderboard_message_id": message.id})
+        await mongo_manager.save_buc_settings(settings)
+        await self.update_leaderboard()
+
+    @app_commands.command(name="buc_leaderboard_mobile", description="Post the Auto-Updating Leaderboard (Mobile View)")
+    @is_owner()
+    async def buc_leaderboard_mobile(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="🏆 BUC CUP Leaderboard [Mobile]", description="Initializing...", color=discord.Color.gold())
+        await interaction.response.send_message(embed=embed)
+        message = await interaction.original_response()
+        
+        settings = await mongo_manager.get_buc_settings() or {}
+        settings.update({"leaderboard_mobile_channel_id": message.channel.id, "leaderboard_mobile_message_id": message.id})
         await mongo_manager.save_buc_settings(settings)
         await self.update_leaderboard()
 
@@ -382,7 +450,7 @@ class BUCSystem(commands.Cog):
         embed = await view.get_embed(pages, sorted_days, 0)
         await interaction.response.send_message(embed=embed, view=view)
 
-    @app_commands.command(name="buc_player_stats", description="Post the Player Stats Leaderboard")
+    @app_commands.command(name="buc_player_stats", description="Post the Player Stats Leaderboard (PC View)")
     @is_owner()
     async def buc_player_stats(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🌟 Player Stats", description="Initializing...", color=discord.Color.purple())
@@ -391,6 +459,18 @@ class BUCSystem(commands.Cog):
         
         current_settings = await mongo_manager.get_buc_settings() or {}
         current_settings.update({"player_stats_channel_id": message.channel.id, "player_stats_message_id": message.id})
+        await mongo_manager.save_buc_settings(current_settings)
+        await self.update_player_stats()
+
+    @app_commands.command(name="buc_player_stats_mobile", description="Post the Player Stats Leaderboard (Mobile View)")
+    @is_owner()
+    async def buc_player_stats_mobile(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="🌟 Player Stats [Mobile]", description="Initializing...", color=discord.Color.purple())
+        await interaction.response.send_message(embed=embed)
+        message = await interaction.original_response()
+        
+        current_settings = await mongo_manager.get_buc_settings() or {}
+        current_settings.update({"player_stats_mobile_channel_id": message.channel.id, "player_stats_mobile_message_id": message.id})
         await mongo_manager.save_buc_settings(current_settings)
         await self.update_player_stats()
 
