@@ -77,7 +77,7 @@ class BUCSystem(commands.Cog):
         matches = await mongo_manager.get_buc_matches()
         
         # Calculate Stats
-        team_stats = {team["name"]: {"points": 0, "total_percent": 0.0, "played": 0, "wins": 0, "losses": 0, "ties": 0} for team in teams}
+        team_stats = {team["name"]: {"points": 0, "stars": 0, "total_percent": 0.0, "played": 0, "wins": 0, "losses": 0, "ties": 0} for team in teams}
         
         for match in matches:
             if not match.get("completed") or match["round"] != 1:
@@ -87,9 +87,11 @@ class BUCSystem(commands.Cog):
             
             if t1 in team_stats:
                 team_stats[t1]["played"] += 1
+                team_stats[t1]["stars"] += match.get("score1", 0)
                 team_stats[t1]["total_percent"] += match.get("percent1", 0)
             if t2 in team_stats:
                 team_stats[t2]["played"] += 1
+                team_stats[t2]["stars"] += match.get("score2", 0)
                 team_stats[t2]["total_percent"] += match.get("percent2", 0)
 
             if winner == "Tie":
@@ -110,8 +112,8 @@ class BUCSystem(commands.Cog):
                     team_stats[t2]["wins"] += 1
                 if t1 in team_stats: team_stats[t1]["losses"] += 1
 
-        # Sort by Points, then Total Percentage
-        sorted_teams = sorted(team_stats.items(), key=lambda x: (x[1]["points"], x[1]["total_percent"]), reverse=True)
+        # Sort by Points, then Stars, then Total Percentage
+        sorted_teams = sorted(team_stats.items(), key=lambda x: (x[1]["points"], x[1]["stars"], x[1]["total_percent"]), reverse=True)
 
         # --- Update PC Leaderboard ---
         if "leaderboard_channel_id" in settings and "leaderboard_message_id" in settings:
@@ -142,26 +144,27 @@ class BUCSystem(commands.Cog):
         rows = []
         if mobile:
             # Mobile Format
-            # Rk Team          P W L Pt %
-            header = f"{'Rk':<3} {'Team':<13} {'P':<1} {'W':<1} {'L':<1} {'Pt':<2} {'%':<3}"
+            # Rk Team          P W L Pt ★ %
+            header = f"{'Rk':<3} {'Team':<13} {'P':<1} {'W':<1} {'L':<1} {'Pt':<2} {'★':<2} {'%':<3}"
             for i, (name, stats) in enumerate(sorted_teams):
                 rank = i + 1
                 t_name = (name[:11] + "..") if len(name) > 13 else name
                 display_percent = stats['total_percent'] * 5
-                row = f"#{rank:<2} {t_name:<13} {stats['played']:<1} {stats['wins']:<1} {stats['losses']:<1} {stats['points']:<2} {display_percent:>3.0f}"
+                # Using ★ for stars
+                row = f"#{rank:<2} {t_name:<13} {stats['played']:<1} {stats['wins']:<1} {stats['losses']:<1} {stats['points']:<2} {stats['stars']:<2} {display_percent:>3.0f}"
                 rows.append(row)
             table = "\n".join([header] + rows)
             embed.description = f"```text\n{table}\n```\nTop 4 qualify for Round 2 (Page Playoff) 🟢"
         else:
             # PC Format
-            # Rank | Team | P | W | L | T | Pts | %
-            header = f"{'Rank':<4} | {'Team':<15} | {'P':<2} | {'W':<2} | {'L':<2} | {'T':<2} | {'Pts':<3} | {'Total %':<7}"
+            # Rank | Team | P | W | L | T | Pts | Stars | %
+            header = f"{'Rank':<4} | {'Team':<15} | {'P':<2} | {'W':<2} | {'L':<2} | {'T':<2} | {'Pts':<3} | {'Stars':<5} | {'Total %':<7}"
             separator = "-" * len(header)
             for i, (name, stats) in enumerate(sorted_teams):
                 rank = i + 1
                 t_name = (name[:13] + "..") if len(name) > 15 else name
                 display_percent = stats['total_percent'] * 5
-                row = f"#{rank:<3} | {t_name:<15} | {stats['played']:<2} | {stats['wins']:<2} | {stats['losses']:<2} | {stats['ties']:<2} | {stats['points']:<3} | {display_percent:>7.2f}"
+                row = f"#{rank:<3} | {t_name:<15} | {stats['played']:<2} | {stats['wins']:<2} | {stats['losses']:<2} | {stats['ties']:<2} | {stats['points']:<3} | {stats['stars']:<5} | {display_percent:>7.2f}"
                 rows.append(row)
             table = "\n".join([header, separator] + rows)
             embed.description = f"```text\n{table}\n```\nTop 4 qualify for Round 2 (Page Playoff) 🟢"
@@ -864,56 +867,6 @@ class ManageMatchesView(discord.ui.View):
              await interaction.response.send_message("No Round 1 matches found.", ephemeral=True)
              return
 
-        if not all(m.get("completed") for m in r1_matches):
-             await interaction.response.send_message("❌ Cannot start Round 2 until ALL Round 1 matches are completed and results entered.", ephemeral=True)
-             return
-
-        # Get Top 4
-        teams = await mongo_manager.get_buc_teams()
-        # We need to sort them exactly as the leaderboard does.
-        # Re-using logic from update_leaderboard would be best, but for now duplicate sort logic.
-        # Actually, we should rely on the leaderboard logic or stored stats.
-        # Let's recalc stats to be sure.
-        matches = await mongo_manager.get_buc_matches()
-        team_stats = {team["name"]: {"points": 0, "percentage": 0.0, "total_percent": 0.0, "played": 0} for team in teams}
-        
-        for match in matches:
-            if not match.get("completed") or match["round"] != 1:
-                continue
-            t1, t2 = match["team1"], match["team2"]
-            winner = match.get("winner")
-            
-            if t1 in team_stats:
-                team_stats[t1]["played"] += 1
-                team_stats[t1]["total_percent"] += match.get("percent1", 0)
-            if t2 in team_stats:
-                team_stats[t2]["played"] += 1
-                team_stats[t2]["total_percent"] += match.get("percent2", 0)
-
-            if winner == "Tie":
-                if t1 in team_stats: team_stats[t1]["points"] += 1
-                if t2 in team_stats: team_stats[t2]["points"] += 1
-            elif winner == t1:
-                if t1 in team_stats: team_stats[t1]["points"] += 2
-            elif winner == t2:
-                if t2 in team_stats: team_stats[t2]["points"] += 2
-
-        for name, stats in team_stats.items():
-            if stats["played"] > 0:
-                stats["percentage"] = stats["total_percent"] / stats["played"]
-
-        sorted_teams = sorted(team_stats.items(), key=lambda x: (x[1]["points"], x[1]["percentage"]), reverse=True)
-        
-        if len(sorted_teams) < 4:
-            await interaction.response.send_message("Not enough teams for Round 2.", ephemeral=True)
-            return
-
-        top4 = [t[0] for t in sorted_teams[:4]] # Names
-        # 1 vs 2
-        m1 = {"id": "R2_M1", "label": "M1", "team1": top4[0], "team2": top4[1], "round": 2, "completed": False, "winner": None}
-        # 3 vs 4
-        m2 = {"id": "R2_M2", "label": "M2", "team1": top4[2], "team2": top4[3], "round": 2, "completed": False, "winner": None}
-        
         await mongo_manager.save_buc_match(m1)
         await mongo_manager.save_buc_match(m2)
         
