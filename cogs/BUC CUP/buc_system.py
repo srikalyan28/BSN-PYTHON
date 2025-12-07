@@ -112,6 +112,12 @@ class BUCSystem(commands.Cog):
                     team_stats[t2]["wins"] += 1
                 if t1 in team_stats: team_stats[t1]["losses"] += 1
 
+        # Apply Penalties AFTER totaling points from matches
+        for team_name, stats in team_stats.items():
+             team_obj = next((t for t in teams if t["name"] == team_name), None)
+             if team_obj and "penalty_points" in team_obj:
+                  stats["points"] -= team_obj["penalty_points"]
+
         # Sort by Points, then Stars, then Total Percentage
         sorted_teams = sorted(team_stats.items(), key=lambda x: (x[1]["points"], x[1]["stars"], x[1]["total_percent"]), reverse=True)
 
@@ -577,6 +583,13 @@ class DashboardView(discord.ui.View):
     @discord.ui.button(label="Manage Matches", style=discord.ButtonStyle.secondary, custom_id="buc_manage_matches")
     async def manage_matches(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Select an action:", view=ManageMatchesView(), ephemeral=True)
+
+    @discord.ui.button(label="Manage Penalties", style=discord.ButtonStyle.danger, custom_id="buc_manage_penalties")
+    async def manage_penalties(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != 1272176835769405552:
+             await interaction.response.send_message("❌ Only the Owner can manage penalties.", ephemeral=True)
+             return
+        await interaction.response.send_message("Manage Penalties for Teams:", view=ManagePenaltiesView(), ephemeral=True)
 
     @discord.ui.button(label="Reset Tournament", style=discord.ButtonStyle.danger, row=2, custom_id="buc_reset_tournament")
     async def reset_tournament(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1291,3 +1304,95 @@ class TeamListView(discord.ui.View):
 
 async def setup(bot):
     await bot.add_cog(BUCSystem(bot))
+
+class ManagePenaltiesView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Add Penalty", style=discord.ButtonStyle.danger, custom_id="buc_add_penalty")
+    async def add_penalty(self, interaction: discord.Interaction, button: discord.ui.Button):
+        teams = await mongo_manager.get_buc_teams()
+        if not teams:
+            await interaction.response.send_message("No teams found.", ephemeral=True)
+            return
+
+        options = [discord.SelectOption(label=t["name"], value=t["name"]) for t in teams[:25]]
+        
+        view = discord.ui.View()
+        select = discord.ui.Select(placeholder="Select Team to Penalize", options=options)
+        
+        async def callback(inter: discord.Interaction):
+            t_name = select.values[0]
+            await inter.response.send_modal(PenaltyModal(t_name, "add"))
+
+        select.callback = callback
+        view.add_item(select)
+        await interaction.response.send_message("Select team to add penalty:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Remove Penalty", style=discord.ButtonStyle.success, custom_id="buc_remove_penalty")
+    async def remove_penalty(self, interaction: discord.Interaction, button: discord.ui.Button):
+        teams = await mongo_manager.get_buc_teams()
+        if not teams:
+             await interaction.response.send_message("No teams found.", ephemeral=True)
+             return
+             
+        options = [discord.SelectOption(label=t["name"], value=t["name"]) for t in teams[:25]]
+        
+        view = discord.ui.View()
+        select = discord.ui.Select(placeholder="Select Team to Reduce Penalty", options=options)
+        
+        async def callback(inter: discord.Interaction):
+            t_name = select.values[0]
+            await inter.response.send_modal(PenaltyModal(t_name, "remove"))
+
+        select.callback = callback
+        view.add_item(select)
+        await interaction.response.send_message("Select team to remove penalty:", view=view, ephemeral=True)
+
+class PenaltyModal(discord.ui.Modal):
+    def __init__(self, team_name, action):
+        title = f"{action.capitalize()} Penalty: {team_name}"[:45]
+        super().__init__(title=title)
+        self.team_name = team_name
+        self.action = action
+        self.points = discord.ui.TextInput(label="Points", placeholder="Number of points (e.g. 1 or 2)")
+        self.reason = discord.ui.TextInput(label="Reason", placeholder="Violation of rules...", style=discord.TextStyle.paragraph, required=False)
+        self.add_item(self.points)
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            points = int(self.points.value.strip())
+            if points < 0:
+                 await interaction.followup.send("❌ Points must be positive.", ephemeral=True)
+                 return
+        except ValueError:
+            await interaction.followup.send("❌ Invalid number.", ephemeral=True)
+            return
+
+        teams = await mongo_manager.get_buc_teams()
+        team = next((t for t in teams if t["name"] == self.team_name), None)
+        
+        if not team:
+            await interaction.followup.send("❌ Team not found.", ephemeral=True)
+            return
+            
+        current_penalty = team.get("penalty_points", 0)
+        
+        if self.action == "add":
+            new_penalty = current_penalty + points
+            action_verb = "Added"
+        else:
+            new_penalty = max(0, current_penalty - points)
+            action_verb = "Removed"
+            
+        team["penalty_points"] = new_penalty
+        await mongo_manager.save_buc_team(team)
+        
+        # Log to interaction
+        await interaction.followup.send(f"✅ **{action_verb} {points} penalty points** for {self.team_name}.\nTotal Penalty: {new_penalty}\nReason: {self.reason.value}", ephemeral=True)
+        
+        # Update Leaderboard
+        cog = interaction.client.get_cog("BUCSystem")
+        if cog: await cog.update_leaderboard()
