@@ -872,13 +872,81 @@ class ManageMatchesView(discord.ui.View):
 
     @discord.ui.button(label="Start Round 2 (Page Playoff)", style=discord.ButtonStyle.danger, custom_id="buc_start_r2")
     async def start_r2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        
         # Check if R1 complete
         matches = await mongo_manager.get_buc_matches()
         r1_matches = [m for m in matches if m["round"] == 1]
         
         if not r1_matches:
-             await interaction.response.send_message("No Round 1 matches found.", ephemeral=True)
+             await interaction.followup.send("❌ No Round 1 matches found.", ephemeral=True)
              return
+             
+        incomplete = [m for m in r1_matches if not m.get("completed")]
+        if incomplete:
+            await interaction.followup.send(f"❌ Round 1 is not complete! {len(incomplete)} matches remaining.", ephemeral=True)
+            return
+
+        # Calculate Standings
+        teams = await mongo_manager.get_buc_teams()
+        team_stats = {t["name"]: {"points": 0, "stars": 0, "total_percent": 0.0, "wins": 0, "losses": 0, "ties": 0, "played": 0} for t in teams}
+        
+        for m in r1_matches:
+            t1, t2 = m["team1"], m["team2"]
+            winner = m.get("winner")
+            
+            # Stats update
+            if t1 in team_stats:
+                team_stats[t1]["played"] += 1
+                team_stats[t1]["stars"] += m.get("score1", 0)
+                team_stats[t1]["total_percent"] += m.get("percent1", 0.0)
+            if t2 in team_stats:
+                team_stats[t2]["played"] += 1
+                team_stats[t2]["stars"] += m.get("score2", 0)
+                team_stats[t2]["total_percent"] += m.get("percent2", 0.0)
+                
+            if winner == "Tie":
+                if t1 in team_stats: team_stats[t1]["points"] += 1; team_stats[t1]["ties"] += 1
+                if t2 in team_stats: team_stats[t2]["points"] += 1; team_stats[t2]["ties"] += 1
+            elif winner == t1:
+                if t1 in team_stats: team_stats[t1]["points"] += 2; team_stats[t1]["wins"] += 1
+                if t2 in team_stats: team_stats[t2]["losses"] += 1
+            elif winner == t2:
+                if t2 in team_stats: team_stats[t2]["points"] += 2; team_stats[t2]["wins"] += 1
+                if t1 in team_stats: team_stats[t1]["losses"] += 1
+
+        # Apply Penalties
+        for team_name, stats in team_stats.items():
+             team_obj = next((t for t in teams if t["name"] == team_name), None)
+             if team_obj and "penalty_points" in team_obj:
+                  stats["points"] -= team_obj["penalty_points"]
+
+        # Sort: Points > Stars > Percent
+        sorted_teams = sorted(team_stats.items(), key=lambda x: (x[1]["points"], x[1]["stars"], x[1]["total_percent"]), reverse=True)
+        
+        if len(sorted_teams) < 4:
+            await interaction.followup.send("❌ Not enough teams for Page Playoff (Need at least 4).", ephemeral=True)
+            return
+
+        top4 = [t[0] for t in sorted_teams[:4]]
+        
+        # M1: 1 vs 2 (Qualifier 1)
+        m1 = {
+            "id": "R2_M1", "label": "M1", 
+            "team1": top4[0], "team2": top4[1], 
+            "round": 2, "completed": False, "winner": None,
+            "score1": 0, "score2": 0, "percent1": 0.0, "percent2": 0.0,
+            "team1_stats": [], "team2_stats": []
+        }
+        
+        # M2: 3 vs 4 (Eliminator)
+        m2 = {
+            "id": "R2_M2", "label": "M2", 
+            "team1": top4[2], "team2": top4[3], 
+            "round": 2, "completed": False, "winner": None,
+            "score1": 0, "score2": 0, "percent1": 0.0, "percent2": 0.0,
+            "team1_stats": [], "team2_stats": []
+        }
 
         await mongo_manager.save_buc_match(m1)
         await mongo_manager.save_buc_match(m2)
@@ -889,7 +957,7 @@ class ManageMatchesView(discord.ui.View):
         await mongo_manager.save_buc_match(m3)
         await mongo_manager.save_buc_match(m4)
 
-        await interaction.response.send_message(f"Round 2 Matches Generated!\n1v2: {top4[0]} vs {top4[1]}\n3v4: {top4[2]} vs {top4[3]}", ephemeral=True)
+        await interaction.followup.send(f"✅ Round 2 Matches Generated!\n**Qualifier 1:** {top4[0]} vs {top4[1]}\n**Eliminator:** {top4[2]} vs {top4[3]}", ephemeral=True)
         
         cog = interaction.client.get_cog("BUCSystem")
         if cog: await cog.update_bracket()
