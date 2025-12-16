@@ -405,27 +405,8 @@ class BSNEditTeamModal(discord.ui.Modal):
         if old_cap not in new_tags:
             self.team_data["captain_tag"] = players_data[0]["tag"]
         
-        if not completed:
-            await interaction.response.send_message("No completed matches to edit.", ephemeral=True)
-            return
-            
-        options = []
-        for m in completed[:25]:
-            options.append(discord.SelectOption(label=f"{m['label']}: {m['team1']} vs {m['team2']}", value=m['id']))
-            
-        view = discord.ui.View()
-        select = discord.ui.Select(placeholder="Select Match to Edit", options=options)
-        
-        async def callback(inter: discord.Interaction):
-            match_id = select.values[0]
-            match = next((m for m in matches if m["id"] == match_id), None)
-            await inter.response.send_message(f"⚠️ **EDITING RESULT** for **{match['label']}**.\nPrevious Winner: {match.get('winner')}\n\nPlease re-enter stats for BOTH teams to recalculate.", view=BSNResultEntryView(match), ephemeral=True)
-            
-        select.callback = callback
-        view.add_item(select)
-        select.callback = callback
-        view.add_item(select)
-        await interaction.response.send_message("Select match to edit:", view=view, ephemeral=True)
+        await mongo_manager.save_bsn_team(self.team_data)
+        await interaction.followup.send(f"✅ Team **{new_name}** updated successfully!", ephemeral=True)
 
 class BSNSetDateModal(discord.ui.Modal):
     def __init__(self, match_data):
