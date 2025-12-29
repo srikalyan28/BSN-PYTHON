@@ -548,7 +548,7 @@ class BSNManageMatchesView(discord.ui.View):
             await cog.update_bracket() # Auto-update bracket
             await interaction.followup.send(f"✅ Generated {len(generated)} matches for Round {next_round}. Created {count} threads.", ephemeral=True)
 
-    @discord.ui.button(label="Generate Page Playoff (Top 4)", style=discord.ButtonStyle.primary, custom_id="bsn_gen_pp")
+    @discord.ui.button(label="Generate Top 4 Playoffs (Random)", style=discord.ButtonStyle.primary, custom_id="bsn_gen_pp")
     async def gen_pp(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         
@@ -562,7 +562,7 @@ class BSNManageMatchesView(discord.ui.View):
                 return
             next_round = max_round + 1
         else:
-            await interaction.followup.send("❌ No matches found. Cannot start Page Playoff.", ephemeral=True)
+            await interaction.followup.send("❌ No matches found. Cannot start Playoffs.", ephemeral=True)
             return
 
         # 2. Eliminate losers from previous round first
@@ -579,140 +579,171 @@ class BSNManageMatchesView(discord.ui.View):
                 t["eliminated"] = True
                 await mongo_manager.save_bsn_team(t)
 
-        # 3. Select Top 4 Active Teams based on Leaderboard
+        # 3. Select 4 Active Teams (Randomly paired)
         active_teams = [t for t in teams if not t.get("eliminated")]
         
-        # Calculate stats for sorting
-        stats = {t["name"]: {"wins": 0, "total_stars": 0, "total_perc": 0.0} for t in active_teams}
-        for m in matches:
-            if not m["completed"]: continue
-            t1, t2 = m["team1"], m["team2"]
-            if t1 in stats:
-                stats[t1]["total_stars"] += m.get("team1_total_stars", 0)
-                stats[t1]["total_perc"] += m.get("team1_total_perc", 0.0)
-            if t2 in stats:
-                stats[t2]["total_stars"] += m.get("team2_total_stars", 0)
-                stats[t2]["total_perc"] += m.get("team2_total_perc", 0.0)
-            
-            w = m["winner"]
-            if w in stats: stats[w]["wins"] += 1
-
-        # Sort: Wins -> Stars -> Perc
-        sorted_active = sorted(
-            active_teams,
-            key=lambda t: (
-                stats[t["name"]]["wins"],
-                stats[t["name"]]["total_stars"],
-                stats[t["name"]]["total_perc"]
-            ),
-            reverse=True
-        )
-
-        if len(sorted_active) < 4:
-            await interaction.followup.send(f"❌ Need at least 4 active teams for Page Playoff (Found {len(sorted_active)}).", ephemeral=True)
+        if len(active_teams) != 4:
+            await interaction.followup.send(f"❌ Need exactly 4 active teams for Playoffs (Found {len(active_teams)}).", ephemeral=True)
             return
 
-        top_4 = sorted_active[:4]
+        import random
+        random.shuffle(active_teams)
         
-        # Eliminate anyone else (Rank 5+)
-        for t in sorted_active[4:]:
-            t["eliminated"] = True
-            await mongo_manager.save_bsn_team(t)
-            
-        # 4. Generate Page Playoff Bracket
-        # Rank 1 vs Rank 2 (Qualifier 1)
-        q1 = {
-            "id": "PP_Q1",
-            "label": "Qualifier 1 (Rank 1 vs 2)",
-            "team1": top_4[0]["name"],
-            "team2": top_4[1]["name"],
+        # 4. Generate Random Double Elim Bracket (Initial Matches)
+        # Match 1
+        m1 = {
+            "id": "PP_M1",
+            "label": "Playoff Match 1",
+            "team1": active_teams[0]["name"],
+            "team2": active_teams[1]["name"],
             "round": next_round,
-            "bracket": "page_playoff",
+            "bracket": "playoff_double_elim",
             "completed": False,
             "winner": None
         }
         
-        # Rank 3 vs Rank 4 (Eliminator 1)
-        e1 = {
-            "id": "PP_E1",
-            "label": "Eliminator 1 (Rank 3 vs 4)",
-            "team1": top_4[2]["name"],
-            "team2": top_4[3]["name"],
+        # Match 2
+        m2 = {
+            "id": "PP_M2",
+            "label": "Playoff Match 2",
+            "team1": active_teams[2]["name"],
+            "team2": active_teams[3]["name"],
             "round": next_round,
-            "bracket": "page_playoff",
+            "bracket": "playoff_double_elim",
             "completed": False,
             "winner": None
         }
         
-        await mongo_manager.save_bsn_match(q1)
-        await mongo_manager.save_bsn_match(e1)
+        await mongo_manager.save_bsn_match(m1)
+        await mongo_manager.save_bsn_match(m2)
         
         # Create Threads
         cog = interaction.client.get_cog("BSNCupSystem")
         if cog:
-            await cog.create_match_thread(q1)
-            await cog.create_match_thread(e1)
+            await cog.create_match_thread(m1)
+            await cog.create_match_thread(m2)
             await cog.update_bracket() # Auto-update bracket
         
-        await interaction.followup.send(f"✅ Generated Page Playoff Bracket.\n**Q1**: {q1['team1']} vs {q1['team2']}\n**E1**: {e1['team1']} vs {e1['team2']}", ephemeral=True)
+        await interaction.followup.send(f"✅ Generated Random Playoff Bracket.\n**M1**: {m1['team1']} vs {m1['team2']}\n**M2**: {m2['team1']} vs {m2['team2']}", ephemeral=True)
 
     @discord.ui.button(label="Generate Next Playoff Stage", style=discord.ButtonStyle.success, custom_id="bsn_gen_pp_next")
     async def gen_pp_next(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         matches = await mongo_manager.get_bsn_matches()
         
-        # Check if we are in Page Playoff
-        if not any(m.get("bracket") == "page_playoff" for m in matches):
-            await interaction.followup.send("❌ No Page Playoff active.", ephemeral=True)
+        # Check if we are in Playoffs
+        if not any(m.get("bracket") == "playoff_double_elim" for m in matches):
+            await interaction.followup.send("❌ No Double Elim Playoff active.", ephemeral=True)
             return
 
-        q1 = next((m for m in matches if m["id"] == "PP_Q1"), None)
-        e1 = next((m for m in matches if m["id"] == "PP_E1"), None)
+        # Fetch Playoff Matches
+        m1 = next((m for m in matches if m["id"] == "PP_M1"), None)
+        m2 = next((m for m in matches if m["id"] == "PP_M2"), None)
+        ub = next((m for m in matches if m["id"] == "PP_UB"), None)
+        lb = next((m for m in matches if m["id"] == "PP_LB"), None)
         sf = next((m for m in matches if m["id"] == "PP_SF"), None)
         gf = next((m for m in matches if m["id"] == "PP_GF"), None)
         
         created = []
         
-        # Check for SF generation
-        if q1 and q1["completed"] and e1 and e1["completed"] and not sf:
-            q1_loser = q1["team1"] if q1["winner"] == q1["team2"] else q1["team2"]
+        # 1. Generate Upper Final (WB) and Lower R1 (LB)
+        if m1 and m1["completed"] and m2 and m2["completed"] and not ub and not lb:
+            # Upper Bracket: Winner M1 vs Winner M2
+            ub_match = {
+                "id": "PP_UB",
+                "label": "Upper Bracket Final",
+                "team1": m1["winner"],
+                "team2": m2["winner"],
+                "round": m1["round"],
+                "bracket": "playoff_double_elim",
+                "completed": False,
+                "winner": None
+            }
+            
+            # Lower Bracket: Loser M1 vs Loser M2
+            m1_loser = m1["team1"] if m1["winner"] == m1["team2"] else m1["team2"]
+            m2_loser = m2["team1"] if m2["winner"] == m2["team2"] else m2["team2"]
+            
+            lb_match = {
+                "id": "PP_LB",
+                "label": "Lower Bracket R1",
+                "team1": m1_loser,
+                "team2": m2_loser,
+                "round": m1["round"],
+                "bracket": "playoff_double_elim",
+                "completed": False,
+                "winner": None
+            }
+            
+            await mongo_manager.save_bsn_match(ub_match)
+            await mongo_manager.save_bsn_match(lb_match)
+            created.extend(["Upper Bracket Final", "Lower Bracket R1"])
+            
+        # 2. Generate Semi-Final (Lower Final)
+        if ub and ub["completed"] and lb and lb["completed"] and not sf:
+            # Winner LB vs Loser UB
+            ub_loser = ub["team1"] if ub["winner"] == ub["team2"] else ub["team2"]
+            
+            # Eliminate loser of LB
+            lb_loser = lb["team1"] if lb["winner"] == lb["team2"] else lb["team2"]
+            teams = await mongo_manager.get_bsn_teams()
+            for t in teams:
+                if t["name"] == lb_loser:
+                    t["eliminated"] = True
+                    await mongo_manager.save_bsn_team(t)
+            
             sf_match = {
                 "id": "PP_SF",
-                "label": "Semi-Final",
-                "team1": q1_loser,
-                "team2": e1["winner"],
-                "round": q1["round"],
-                "bracket": "page_playoff",
+                "label": "Semi-Final (Lower Final)",
+                "team1": ub_loser,
+                "team2": lb["winner"],
+                "round": ub["round"],
+                "bracket": "playoff_double_elim",
                 "completed": False,
                 "winner": None
             }
             await mongo_manager.save_bsn_match(sf_match)
             created.append("Semi-Final")
             
-        # Check for GF generation
-        if q1 and q1["completed"] and sf and sf["completed"] and not gf:
+        # 3. Generate Grand Final
+        if sf and sf["completed"] and ub and ub["completed"] and not gf:
+            # Winner UB vs Winner SF
+            
+            # Eliminate loser of SF
+            sf_loser = sf["team1"] if sf["winner"] == sf["team2"] else sf["team2"]
+            teams = await mongo_manager.get_bsn_teams()
+            for t in teams:
+                if t["name"] == sf_loser:
+                    t["eliminated"] = True
+                    await mongo_manager.save_bsn_team(t)
+                    
             gf_match = {
                 "id": "PP_GF",
                 "label": "Grand Final",
-                "team1": q1["winner"],
+                "team1": ub["winner"],
                 "team2": sf["winner"],
-                "round": q1["round"],
-                "bracket": "page_playoff",
+                "round": ub["round"],
+                "bracket": "playoff_double_elim",
                 "completed": False,
                 "winner": None
             }
             await mongo_manager.save_bsn_match(gf_match)
             created.append("Grand Final")
-            
+
         if created:
             cog = interaction.client.get_cog("BSNCupSystem")
             if cog:
-                # Re-fetch matches to get the new ones for thread creation
                 matches = await mongo_manager.get_bsn_matches()
                 for label in created:
-                    mid = "PP_SF" if label == "Semi-Final" else "PP_GF"
-                    m = next((x for x in matches if x["id"] == mid), None)
-                    if m: await cog.create_match_thread(m)
+                    mid = ""
+                    if label == "Upper Bracket Final": mid = "PP_UB"
+                    elif label == "Lower Bracket R1": mid = "PP_LB"
+                    elif label == "Semi-Final": mid = "PP_SF"
+                    elif label == "Grand Final": mid = "PP_GF"
+                    
+                    if mid:
+                        m = next((x for x in matches if x["id"] == mid), None)
+                        if m: await cog.create_match_thread(m)
                 await cog.update_bracket()
                 
             await interaction.followup.send(f"✅ Generated: {', '.join(created)}", ephemeral=True)
@@ -1552,8 +1583,9 @@ class BSNCupSystem(commands.Cog):
             embed.add_field(name="🔹 Round 2", value=chunk, inline=False)
             
         if r3:
-            # Check if it's Page Playoff or old Double Elim
+            # Check if it's Page Playoff or Double Elim
             is_pp = any(m.get("bracket") == "page_playoff" for m in r3)
+            is_de = any(m.get("bracket") == "playoff_double_elim" for m in r3)
             
             if is_pp:
                 # Custom Display for Page Playoff
@@ -1568,11 +1600,33 @@ class BSNCupSystem(commands.Cog):
                 if sf: pp_text += f"**Semi-Final**\n```diff\n{format_match_line(sf)}\n```\n"
                 if gf: pp_text += f"🏆 **GRAND FINAL** 🏆\n```diff\n{format_match_line(gf)}\n```"
                 
-                embed.add_field(name="🔥 Page Playoff (Final 4)", value=pp_text, inline=False)
+                embed.add_field(name="🔥 Page Playoffs", value=pp_text, inline=False)
+
+            elif is_de:
+                # Custom Display for Double Elim
+                m1 = next((m for m in r3 if m["id"] == "PP_M1"), None)
+                m2 = next((m for m in r3 if m["id"] == "PP_M2"), None)
+                ub = next((m for m in r3 if m["id"] == "PP_UB"), None)
+                lb = next((m for m in r3 if m["id"] == "PP_LB"), None)
+                sf = next((m for m in r3 if m["id"] == "PP_SF"), None)
+                gf = next((m for m in r3 if m["id"] == "PP_GF"), None)
+                
+                de_text = ""
+                if m1: de_text += f"**Match 1**\n```diff\n{format_match_line(m1)}\n```\n"
+                if m2: de_text += f"**Match 2**\n```diff\n{format_match_line(m2)}\n```\n"
+                if ub: de_text += f"**Upper Final** (Winner ➔ GF)\n```diff\n{format_match_line(ub)}\n```\n"
+                if lb: de_text += f"**Lower R1** (Loser ➔ Out)\n```diff\n{format_match_line(lb)}\n```\n"
+                if sf: de_text += f"**Lower Final**\n```diff\n{format_match_line(sf)}\n```\n"
+                if gf: de_text += f"🏆 **GRAND FINAL** 🏆\n```diff\n{format_match_line(gf)}\n```"
+                
+                embed.add_field(name="🔥 Playoffs (Double Elim)", value=de_text, inline=False)
+            
             else:
+                # Standard Round 3
                 lines = [format_match_line(m) for m in r3]
                 chunk = "```diff\n" + "\n\n".join(lines) + "\n```"
-                embed.add_field(name="🔹 Round 3 (Double Elim)", value=chunk, inline=False)
+                embed.add_field(name="🔹 Round 3", value=chunk, inline=False)
+
             
         embed.timestamp = datetime.datetime.now()
         await message.edit(embed=embed)
