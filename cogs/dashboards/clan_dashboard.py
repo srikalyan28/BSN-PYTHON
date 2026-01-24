@@ -187,6 +187,7 @@ async def collect_clan_details(interaction, clan_type, min_th):
         # Fetch additional details from CoC API
         clan_details = await coc_api.get_clan(tag)
         war_league = clan_details.war_league.name if clan_details and clan_details.war_league else "Unranked"
+        badge_url = clan_details.badge.url if clan_details else ""
         
         capital_hall = "N/A"
         if clan_details:
@@ -213,7 +214,8 @@ async def collect_clan_details(interaction, clan_type, min_th):
             "leader_id": str(leader_id),
             "leadership_role_id": str(role_id),
             "war_league": war_league,
-            "capital_hall": str(capital_hall)
+            "capital_hall": str(capital_hall),
+            "badge_url": badge_url
         }
         
         await mongo_manager.save_clan(clan_data)
@@ -323,6 +325,8 @@ class SingleFieldModal(discord.ui.Modal):
                 
                 await mongo_manager.update_clan_field(new_value, "war_league", war_league)
                 await mongo_manager.update_clan_field(new_value, "capital_hall", capital_hall)
+                if clan_details:
+                    await mongo_manager.update_clan_field(new_value, "badge_url", clan_details.badge.url)
                 
                 await interaction.response.send_message(f"✅ Updated **{self.field_key}** to `{new_value}` and refreshed stats.", ephemeral=True)
                 return

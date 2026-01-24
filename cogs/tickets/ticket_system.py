@@ -7,12 +7,69 @@ from utils.embed_utils import create_invite_embed, create_rejection_embed
 import os
 import asyncio
 from datetime import datetime
+from discord.ext import tasks
+import aiohttp
 
 TICKET_CATEGORY_ID = 1364627200271319140
 
 class TicketSystemCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.clan_stats_updater.start()
+
+    def cog_unload(self):
+        self.clan_stats_updater.cancel()
+
+    @tasks.loop(hours=12)
+    async def clan_stats_updater(self):
+        print("Starting scheduled clan stats update...")
+        clans = await mongo_manager.get_clans()
+        for c in clans:
+            try:
+                clan_tag = c['clan_tag']
+                clan_details = await coc_api.get_clan(clan_tag)
+                if clan_details:
+                    updates = {}
+                    
+                    # War League
+                    war_league = clan_details.war_league.name if clan_details.war_league else "Unranked"
+                    if c.get('war_league') != war_league:
+                        updates["war_league"] = war_league
+                        
+                    # Capital Hall
+                    capital_hall = "N/A"
+                    if hasattr(clan_details, 'capital_hall_level'):
+                        capital_hall = str(clan_details.capital_hall_level)
+                    elif hasattr(clan_details, 'capital_districts'):
+                         districts = clan_details.capital_districts
+                         if districts:
+                             for d in districts:
+                                 if d.name == "Capital Peak":
+                                     capital_hall = str(d.hall_level)
+                                     break
+                             if capital_hall == "N/A" and districts:
+                                 capital_hall = str(districts[0].hall_level)
+                    
+                    if c.get('capital_hall') != capital_hall:
+                        updates["capital_hall"] = capital_hall
+
+                    # Badge URL (Fallback)
+                    badge_url = clan_details.badge.url
+                    if c.get('badge_url') != badge_url:
+                        updates["badge_url"] = badge_url
+                    
+                    # Apply Updates
+                    if updates:
+                        for field, value in updates.items():
+                            await mongo_manager.update_clan_field(clan_tag, field, value)
+                        print(f"Updated stats for {c['name']} ({clan_tag}): {updates}")
+                        
+            except Exception as e:
+                print(f"Error updating stats for {c.get('name', 'Unknown')}: {e}")
+
+    @clan_stats_updater.before_loop
+    async def before_stats_update(self):
+        await self.bot.wait_until_ready()
 
     @commands.Cog.listener()
     async def on_guild_channel_create(self, channel):
@@ -603,11 +660,44 @@ class ApprovalView(discord.ui.View):
             
             acc = self.session_data["accounts"][index]
             
+            # Determine Logo URL (Validate Custom Logo, Fallback to Badge)
+            logo_url = clan.get('logo_url')
+            badge_url = clan.get('badge_url')
+            
+            # If badge_url is missing in DB (legacy data), try to fetch it now
+            if not badge_url:
+                try:
+                    fetched_clan = await coc_api.get_clan(clan['clan_tag'])
+                    if fetched_clan:
+                        badge_url = fetched_clan.badge.url
+                        # Opportunistic update
+                        await mongo_manager.update_clan_field(clan['clan_tag'], "badge_url", badge_url)
+                except:
+                    pass
+
+            final_logo_url = logo_url
+            use_fallback = False
+
+            if not logo_url:
+                use_fallback = True
+            else:
+                # Check if logo_url is valid/accessible
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.head(logo_url, timeout=5) as resp:
+                            if resp.status >= 400:
+                                use_fallback = True
+                except:
+                    use_fallback = True
+            
+            if use_fallback and badge_url:
+                final_logo_url = badge_url
+            
             embed = create_invite_embed(
                 clan_name=clan['name'],
                 leader_id=clan.get('leader_id'),
                 leadership_role_id=clan.get('leadership_role_id'),
-                logo_url=clan.get('logo_url'),
+                logo_url=final_logo_url,
                 inviter_mention=interaction.user.mention
             )
             
