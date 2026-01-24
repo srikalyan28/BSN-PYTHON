@@ -130,8 +130,66 @@ class TicketSystemCog(commands.Cog):
              await self.start_clan_selection(interaction, session_data, account_index + 1)
              return
 
-        embed = discord.Embed(title=f"Select Clan Type for {acc['name']}", description="Please select the type of clan you are looking for.", color=discord.Color.purple())
-        view = ClanTypeSelectionView(session_data, account_index, self)
+        # Fetch All Clans
+        clans = await mongo_manager.get_clans()
+        
+        # Filter by eligibility (Visible + Min TH)
+        valid_clans = [c for c in clans if int(c.get('min_th', 99)) <= int(acc['th']) and c.get('visible', True)]
+        
+        # SELF-HEALING STATS LOGIC (Moved from ClanTypeSelectionView)
+        updates_made = False
+        for c in valid_clans:
+            if c.get('war_league', 'N/A') == 'N/A' or c.get('capital_hall', 'N/A') == 'N/A':
+                try:
+                    clan_details = await coc_api.get_clan(c['clan_tag'])
+                    if clan_details:
+                        war_league = clan_details.war_league.name if clan_details.war_league else "Unranked"
+                        
+                        capital_hall = "N/A"
+                        if hasattr(clan_details, 'capital_hall_level'):
+                            capital_hall = str(clan_details.capital_hall_level)
+                        elif hasattr(clan_details, 'capital_districts'):
+                             districts = clan_details.capital_districts
+                             if districts:
+                                 for d in districts:
+                                     if d.name == "Capital Peak":
+                                         capital_hall = str(d.hall_level)
+                                         break
+                                 if capital_hall == "N/A" and districts:
+                                     capital_hall = str(districts[0].hall_level)
+                        
+                        await mongo_manager.update_clan_field(c['clan_tag'], "war_league", war_league)
+                        await mongo_manager.update_clan_field(c['clan_tag'], "capital_hall", capital_hall)
+                        c['war_league'] = war_league
+                        c['capital_hall'] = capital_hall
+                        updates_made = True
+                except Exception as e:
+                    print(f"Error healing stats: {e}")
+        
+        if updates_made:
+            print("Self-healed clan stats.")
+
+        # Sort into Regular and Feeder
+        regular_clans = [c for c in valid_clans if c.get('type', 'Regular').lower() == 'regular']
+        feeder_clans = [c for c in valid_clans if c.get('type', 'Regular').lower() == 'feeder'] # Default to Regular if missing, but checking feeder explicitly
+
+        # If NO suitable clans at all (despite passing global check, maybe mismatch?)
+        if not regular_clans and not feeder_clans:
+            # Rejection Flow
+            criteria_embed = discord.Embed(
+                title="Criteria Mismatch",
+                description=f"Hello **{acc['name']}**,\n\nUnfortunately, no suitable clans are available for your profile (**TH{acc['th']}**) at this time.",
+                color=discord.Color.red()
+            )
+            await interaction.channel.send(embed=criteria_embed)
+            
+            # Mark as rejected
+            self.session_data["accounts"][self.account_index]["selected_clan_tag"] = "rejected"
+            await self.start_clan_selection(interaction, session_data, account_index + 1)
+            return
+
+        embed = discord.Embed(title=f"Select Clan for {acc['name']}", description="Please choose from the available clans below.", color=discord.Color.purple())
+        view = ClanSelectionView(session_data, account_index, regular_clans, feeder_clans, self)
         await interaction.channel.send(embed=embed, view=view)
 
     async def submit_application(self, interaction, session_data):
@@ -569,96 +627,54 @@ async def finalize_collection_standalone(interaction, session_data):
     if cog:
         await cog.ask_question(interaction, session_data, questions, 0)
 
-class ClanTypeSelectionView(discord.ui.View):
-    def __init__(self, session_data, account_index, cog_instance):
-        super().__init__(timeout=None)
-        self.session_data = session_data
-        self.account_index = account_index
-        self.cog_instance = cog_instance
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if self.session_data.get("user_id") and interaction.user.id != self.session_data["user_id"]:
-            await interaction.response.send_message("This control is not for you.", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.select(placeholder="Select Clan Type", options=[
-        discord.SelectOption(label="Regular", value="Regular"),
-        discord.SelectOption(label="Feeder", value="Feeder")
-    ])
-    async def select_type(self, interaction: discord.Interaction, select: discord.ui.Select):
-        clan_type = select.values[0]
-        # Now show clans of this type
-        clans = await mongo_manager.get_clans()
-        acc = self.session_data["accounts"][self.account_index]
-        
-        valid_clans = [c for c in clans if c['type'].lower() == clan_type.lower() and int(c['min_th']) <= int(acc['th']) and c.get('visible', True)]
-        
-        # Self-healing: Check for missing stats and fetch if needed
-        updates_made = False
-        for c in valid_clans:
-            if c.get('war_league', 'N/A') == 'N/A' or c.get('capital_hall', 'N/A') == 'N/A':
-                try:
-                    # Fetch from API
-                    clan_details = await coc_api.get_clan(c['clan_tag'])
-                    if clan_details:
-                        war_league = clan_details.war_league.name if clan_details.war_league else "Unranked"
-                        
-                        # DEBUG: Check for capital hall attribute
-                        if hasattr(clan_details, 'capital_hall_level'):
-                            capital_hall = str(clan_details.capital_hall_level)
-                        elif hasattr(clan_details, 'capital_districts'):
-                             # Iterate to find Capital Peak
-                             districts = clan_details.capital_districts
-                             capital_hall = "N/A"
-                             if districts:
-                                 for d in districts:
-                                     if d.name == "Capital Peak":
-                                         capital_hall = str(d.hall_level)
-                                         break
-                                 # Fallback if Capital Peak not found but districts exist (unlikely)
-                                 if capital_hall == "N/A" and districts:
-                                     capital_hall = str(districts[0].hall_level)
-                        else:
-                            print(f"DEBUG: capital_hall_level not found. Attributes: {dir(clan_details)}")
-                            capital_hall = "N/A"
-                        
-                        # Update DB
-                        await mongo_manager.update_clan_field(c['clan_tag'], "war_league", war_league)
-                        await mongo_manager.update_clan_field(c['clan_tag'], "capital_hall", capital_hall)
-                        
-                        # Update local object for immediate display
-                        c['war_league'] = war_league
-                        c['capital_hall'] = capital_hall
-                        updates_made = True
-                except Exception as e:
-                    print(f"Error fetching stats for {c['clan_tag']}: {e}")
-                    import traceback
-                    traceback.print_exc()
-        
-        if updates_made:
-            print("Updated missing clan stats during selection.")
-
-        view = ClanSelectionView(self.session_data, self.account_index, valid_clans, self.cog_instance)
-        await interaction.response.send_message(f"Select a {clan_type} clan for {acc['name']}:", view=view, ephemeral=True)
-
 class ClanSelectionView(discord.ui.View):
-    def __init__(self, session_data, account_index, valid_clans, cog_instance):
+    def __init__(self, session_data, account_index, regular_clans, feeder_clans, cog_instance):
         super().__init__(timeout=None)
         self.session_data = session_data
         self.account_index = account_index
         self.cog_instance = cog_instance
         
         options = []
-        for c in valid_clans:
+        
+        # Regular Clans Block
+        if regular_clans:
             options.append(discord.SelectOption(
-                label=c['name'], 
-                value=c['clan_tag'], 
-                description=f"Min TH: {c['min_th']} | CWL: {c.get('war_league', 'N/A')} | CH: {c.get('capital_hall', 'N/A')}"
+                label="--- REGULAR CLANS ---",
+                value="HEADER_REGULAR",
+                description="Main Family Clans",
+                emoji="🛡️"
             ))
+            for c in regular_clans:
+                 options.append(discord.SelectOption(
+                    label=c['name'], 
+                    value=c['clan_tag'], 
+                    description=f"Min TH: {c['min_th']} | CWL: {c.get('war_league', 'N/A')} | CH: {c.get('capital_hall', 'N/A')}",
+                    emoji="⚔️"
+                ))
+        
+        # Feeder Clans Block
+        if feeder_clans:
+            options.append(discord.SelectOption(
+                label="--- FEEDER CLANS ---",
+                value="HEADER_FEEDER",
+                description="Development & Feeder Clans",
+                emoji="🎓"
+            ))
+            for c in feeder_clans:
+                 options.append(discord.SelectOption(
+                    label=c['name'], 
+                    value=c['clan_tag'], 
+                    description=f"Min TH: {c['min_th']} | CWL: {c.get('war_league', 'N/A')} | CH: {c.get('capital_hall', 'N/A')}",
+                    emoji="🌱"
+                ))
+
+        # Truncate if too many (Discord max 25)
+        # We prioritize showing clans over headers if tight, but unlikely for now
+        if len(options) > 25:
+             options = options[:25]
         
         if not options:
-            options.append(discord.SelectOption(label="No suitable clans found", value="none"))
+             options.append(discord.SelectOption(label="No suitable clans found", value="none"))
         
         self.select_clan.options = options
 
@@ -672,6 +688,12 @@ class ClanSelectionView(discord.ui.View):
     async def select_clan(self, interaction: discord.Interaction, select: discord.ui.Select):
         clan_tag = select.values[0]
         
+        # Check for Headers
+        if clan_tag.startswith("HEADER_"):
+            await interaction.response.send_message("⚠️ Please select a **valid clan** from the list, not the category header.", ephemeral=True)
+            # Reset view to allow re-selection (Select menu stays stuck on value otherwise in some clients, but usually OK to just reply ephemeral and let them pick again)
+            return
+
         if clan_tag == "none":
             # REJECTION FLOW
             acc = self.session_data["accounts"][self.account_index]
