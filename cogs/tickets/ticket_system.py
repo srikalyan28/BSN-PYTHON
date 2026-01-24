@@ -124,6 +124,12 @@ class TicketSystemCog(commands.Cog):
             return
 
         acc = session_data["accounts"][account_index]
+        
+        # SKIP IF REJECTED
+        if acc.get("selected_clan_tag") == "rejected":
+             await self.start_clan_selection(interaction, session_data, account_index + 1)
+             return
+
         embed = discord.Embed(title=f"Select Clan Type for {acc['name']}", description="Please select the type of clan you are looking for.", color=discord.Color.purple())
         view = ClanTypeSelectionView(session_data, account_index, self)
         await interaction.channel.send(embed=embed, view=view)
@@ -404,6 +410,38 @@ class PlayerTagModal(discord.ui.Modal, title="Enter Player Tag"):
             name = player.name
             th = player.town_hall
             
+            # CHECK GLOBAL MIN TH
+            clans = await mongo_manager.get_clans()
+            if clans:
+                # Filter visible clans only? User said "lowest town hall accepting clan".
+                # Probably should check all active/visible clans.
+                min_th_global = min([int(c.get('min_th', 99)) for c in clans if c.get('visible', True)], default=0)
+                
+                if th < min_th_global:
+                     # IMMEDIATE REJECTION
+                    rejection_embed = create_rejection_embed("Blackspire Nation", self.session_data["user_id"])
+                    await interaction.response.send_message(embed=rejection_embed)
+                    await interaction.channel.send(f"⚠️ **{name}** (TH{th}) does not meet the minimum requirement of TH{min_th_global} for any clan.")
+                    
+                    # Add as rejected so we don't break the loop count
+                    account_data = {
+                        "tag": "rejected",
+                        "name": name,
+                        "th": th,
+                        "stats": player,
+                        "selected_clan_tag": "rejected" 
+                    }
+                    self.session_data["accounts"].append(account_data)
+                    
+                    # Next account
+                    next_index = self.index + 1
+                    if next_index < self.session_data["account_count"]:
+                         embed = discord.Embed(title=f"Account #{next_index + 1} Details", description="Please enter the Player Tag for this account.", color=discord.Color.blue())
+                         await interaction.channel.send(embed=embed, view=PlayerTagView(self.session_data, next_index))
+                    else:
+                         await finalize_collection_standalone(interaction, self.session_data)
+                    return
+
             account_data = {
                 "tag": f"#{player.tag.strip('#')}",
                 "name": name,
@@ -468,6 +506,10 @@ async def finalize_collection_standalone(interaction, session_data):
     session_data["thread_id"] = thread.id
     
     for acc in session_data["accounts"]:
+        if acc.get("selected_clan_tag") == "rejected":
+            await thread.send(f"⚠️ **Account Skipped:** {acc['name']} (TH{acc['th']}) - Does not meet minimum requirements.")
+            continue
+            
         player = acc['stats']
         
         # Safe access to attributes
