@@ -118,16 +118,30 @@ class TicketSystemCog(commands.Cog):
         await interaction.channel.send(embed=embed, view=view)
 
     async def start_clan_selection(self, interaction, session_data, account_index):
+        # Wrapper to use interaction.channel
+        await self.send_clan_selection(interaction.channel, session_data, account_index)
+
+    async def send_clan_selection(self, channel, session_data, account_index):
         if account_index >= len(session_data["accounts"]):
             # All selections made
-            await self.submit_application(interaction, session_data)
+            # We need an interaction to call submit_application, or we change submit_application to take channel?
+            # submit_application uses interaction.guild.get_thread and interaction.channel.send
+            # We can find the thread from session_data["thread_id"].
+            # Let's try to reconstruct a context or just modify submit_application to take (guild, channel, session_data)
+            
+            # For now, let's look at submit_application.
+            # It needs interaction for: interaction.guild, interaction.channel (for confirmation msg).
+            # If we come from 'Pass', we are in the thread? No, 'Pass' sends menu to main_channel.
+            # So channel IS the main_channel.
+            # We can use channel.guild.
+            await self.submit_application_channel(channel, session_data)
             return
 
         acc = session_data["accounts"][account_index]
         
         # SKIP IF REJECTED
         if acc.get("selected_clan_tag") == "rejected":
-             await self.start_clan_selection(interaction, session_data, account_index + 1)
+             await self.send_clan_selection(channel, session_data, account_index + 1)
              return
 
         # Fetch All Clans
@@ -136,7 +150,7 @@ class TicketSystemCog(commands.Cog):
         # Filter by eligibility (Visible + Min TH)
         valid_clans = [c for c in clans if int(c.get('min_th', 99)) <= int(acc['th']) and c.get('visible', True)]
         
-        # SELF-HEALING STATS LOGIC (Moved from ClanTypeSelectionView)
+        # SELF-HEALING STATS LOGIC
         updates_made = False
         for c in valid_clans:
             if c.get('war_league', 'N/A') == 'N/A' or c.get('capital_hall', 'N/A') == 'N/A':
@@ -144,7 +158,6 @@ class TicketSystemCog(commands.Cog):
                     clan_details = await coc_api.get_clan(c['clan_tag'])
                     if clan_details:
                         war_league = clan_details.war_league.name if clan_details.war_league else "Unranked"
-                        
                         capital_hall = "N/A"
                         if hasattr(clan_details, 'capital_hall_level'):
                             capital_hall = str(clan_details.capital_hall_level)
@@ -157,7 +170,6 @@ class TicketSystemCog(commands.Cog):
                                          break
                                  if capital_hall == "N/A" and districts:
                                      capital_hall = str(districts[0].hall_level)
-                        
                         await mongo_manager.update_clan_field(c['clan_tag'], "war_league", war_league)
                         await mongo_manager.update_clan_field(c['clan_tag'], "capital_hall", capital_hall)
                         c['war_league'] = war_league
@@ -171,29 +183,33 @@ class TicketSystemCog(commands.Cog):
 
         # Sort into Regular and Feeder
         regular_clans = [c for c in valid_clans if c.get('type', 'Regular').lower() == 'regular']
-        feeder_clans = [c for c in valid_clans if c.get('type', 'Regular').lower() == 'feeder'] # Default to Regular if missing, but checking feeder explicitly
+        feeder_clans = [c for c in valid_clans if c.get('type', 'Regular').lower() == 'feeder']
 
-        # If NO suitable clans at all (despite passing global check, maybe mismatch?)
+        # If NO suitable clans
         if not regular_clans and not feeder_clans:
-            # Rejection Flow
             criteria_embed = discord.Embed(
                 title="Criteria Mismatch",
                 description=f"Hello **{acc['name']}**,\n\nUnfortunately, no suitable clans are available for your profile (**TH{acc['th']}**) at this time.",
                 color=discord.Color.red()
             )
-            await interaction.channel.send(embed=criteria_embed)
+            await channel.send(embed=criteria_embed)
             
             # Mark as rejected
-            self.session_data["accounts"][self.account_index]["selected_clan_tag"] = "rejected"
-            await self.start_clan_selection(interaction, session_data, account_index + 1)
+            session_data["accounts"][account_index]["selected_clan_tag"] = "rejected"
+            await self.send_clan_selection(channel, session_data, account_index + 1)
             return
 
         embed = discord.Embed(title=f"Select Clan for {acc['name']}", description="Please choose from the available clans below.", color=discord.Color.purple())
         view = ClanSelectionView(session_data, account_index, regular_clans, feeder_clans, self)
-        await interaction.channel.send(embed=embed, view=view)
+        await channel.send(embed=embed, view=view)
 
     async def submit_application(self, interaction, session_data):
-        thread = interaction.guild.get_thread(session_data["thread_id"])
+        # Compatibility wrapper
+        await self.submit_application_channel(interaction.channel, session_data)
+
+    async def submit_application_channel(self, channel, session_data):
+        guild = channel.guild
+        thread = guild.get_thread(session_data["thread_id"])
         
         summary_embed = discord.Embed(title="Application Summary", color=discord.Color.purple())
         summary_embed.add_field(name="Continent", value=session_data["continent"])
@@ -229,14 +245,14 @@ class TicketSystemCog(commands.Cog):
             description="Your application has been successfully sent to the **High Council**.",
             color=discord.Color.gold()
         )
-        if interaction.guild and interaction.guild.icon:
-            confirm_embed.set_thumbnail(url=interaction.guild.icon.url)
+        if guild.icon:
+            confirm_embed.set_thumbnail(url=guild.icon.url)
             
         confirm_embed.add_field(name="What's Next?", value="Our leadership team is reviewing your village stats and battle records. We'll be with you shortly!", inline=False)
         confirm_embed.add_field(name="While You Wait", value="Check out our rules or chat with other members.", inline=False)
         confirm_embed.set_footer(text="Clash On! ⚔️")
         
-        await interaction.channel.send(embed=confirm_embed)
+        await channel.send(embed=confirm_embed)
 
 class ContinentView(discord.ui.View):
     def __init__(self, owner_id):
@@ -648,8 +664,7 @@ class ClanSelectionView(discord.ui.View):
                  options.append(discord.SelectOption(
                     label=c['name'], 
                     value=c['clan_tag'], 
-                    description=f"Min TH: {c['min_th']} | CWL: {c.get('war_league', 'N/A')} | CH: {c.get('capital_hall', 'N/A')}",
-                    emoji="⚔️"
+                    description=f"Min TH: {c['min_th']} | CWL: {c.get('war_league', 'N/A')} | CH: {c.get('capital_hall', 'N/A')}"
                 ))
         
         # Feeder Clans Block
@@ -664,8 +679,7 @@ class ClanSelectionView(discord.ui.View):
                  options.append(discord.SelectOption(
                     label=c['name'], 
                     value=c['clan_tag'], 
-                    description=f"Min TH: {c['min_th']} | CWL: {c.get('war_league', 'N/A')} | CH: {c.get('capital_hall', 'N/A')}",
-                    emoji="🌱"
+                    description=f"Min TH: {c['min_th']} | CWL: {c.get('war_league', 'N/A')} | CH: {c.get('capital_hall', 'N/A')}"
                 ))
 
         # Truncate if too many (Discord max 25)
@@ -805,16 +819,18 @@ class ApprovalView(discord.ui.View):
             # Re-trigger selection for this account
             cog = interaction.client.get_cog("TicketSystemCog")
             if cog and main_channel:
-                 embed = discord.Embed(title=f"Re-Select Clan Type for {acc['name']}", description="Please select a different clan.", color=discord.Color.purple())
-                 view = ClanTypeSelectionView(self.session_data, index, cog)
-                 await main_channel.send(embed=embed, view=view)
+                 # Call the new send_clan_selection method
+                 await cog.send_clan_selection(main_channel, self.session_data, index)
 
             await interaction.response.send_message(f"Passed {acc['name']}.", ephemeral=True)
             
             # Disable buttons for this account
+            # We must iterate over self.children which contains the buttons
             for child in self.children:
                 if isinstance(child, discord.ui.Button) and (child.custom_id == f"accept_{index}" or child.custom_id == f"pass_{index}"):
                     child.disabled = True
+            
+            # Update the view on the message
             await interaction.message.edit(view=self)
 
         return callback
