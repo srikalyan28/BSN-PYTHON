@@ -419,9 +419,19 @@ class PlayerTagModal(discord.ui.Modal, title="Enter Player Tag"):
                 
                 if th < min_th_global:
                      # IMMEDIATE REJECTION
+                    criteria_embed = discord.Embed(
+                        title="Criteria Mismatch",
+                        description=f"Hello **{name}**,\n\nUnfortunately, your Town Hall level (**TH{th}**) does not meet the minimum requirement of **TH{min_th_global}** established for our clan family.",
+                        color=discord.Color.red()
+                    )
+                    criteria_embed.add_field(name="Account", value=f"{name} ({tag})", inline=True)
+                    criteria_embed.add_field(name="Your TH", value=str(th), inline=True)
+                    criteria_embed.add_field(name="Required TH", value=str(min_th_global), inline=True)
+                    
+                    await interaction.response.send_message(embed=criteria_embed)
+                    
                     rejection_embed = create_rejection_embed("Blackspire Nation", self.session_data["user_id"])
-                    await interaction.response.send_message(embed=rejection_embed)
-                    await interaction.channel.send(f"⚠️ **{name}** (TH{th}) does not meet the minimum requirement of TH{min_th_global} for any clan.")
+                    await interaction.channel.send(embed=rejection_embed)
                     
                     # Add as rejected so we don't break the loop count
                     account_data = {
@@ -534,6 +544,11 @@ async def finalize_collection_standalone(interaction, session_data):
         if 'screenshot_url' in acc:
             await thread.send(f"**Base Screenshot for {acc['name']}**:\n{acc['screenshot_url']}")
             
+    # Check if ALL accounts are rejected
+    if all(acc.get("selected_clan_tag") == "rejected" for acc in session_data["accounts"]):
+        await interaction.channel.send("❌ **Application Closed:** No accounts meet the minimum requirements for any of our clans at this time. Thank you for your interest.")
+        return
+
     # Proceed to Questions Embed
     proceed_embed = discord.Embed(
         title="Details Collected",
