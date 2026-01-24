@@ -430,9 +430,6 @@ class PlayerTagModal(discord.ui.Modal, title="Enter Player Tag"):
                     
                     await interaction.response.send_message(embed=criteria_embed)
                     
-                    rejection_embed = create_rejection_embed("Blackspire Nation", self.session_data["user_id"])
-                    await interaction.channel.send(embed=rejection_embed)
-                    
                     # Add as rejected so we don't break the loop count
                     account_data = {
                         "tag": "rejected",
@@ -546,7 +543,9 @@ async def finalize_collection_standalone(interaction, session_data):
             
     # Check if ALL accounts are rejected
     if all(acc.get("selected_clan_tag") == "rejected" for acc in session_data["accounts"]):
-        await interaction.channel.send("❌ **Application Closed:** No accounts meet the minimum requirements for any of our clans at this time. Thank you for your interest.")
+        # All accounts failed criteria -> Final Rejection
+        rejection_embed = create_rejection_embed("Blackspire Nation", session_data["user_id"])
+        await interaction.channel.send(embed=rejection_embed)
         return
 
     # Proceed to Questions Embed
