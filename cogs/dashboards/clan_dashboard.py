@@ -96,7 +96,7 @@ class ClanSetupStartView(discord.ui.View):
 
     @discord.ui.select(placeholder="Select Clan Type", options=[
         discord.SelectOption(label="Regular", value="Regular"),
-        discord.SelectOption(label="Cruise", value="Cruise")
+        discord.SelectOption(label="Feeder", value="Feeder")
     ])
     async def select_type(self, interaction: discord.Interaction, select: discord.ui.Select):
         self.clan_type = select.values[0]
@@ -154,10 +154,26 @@ async def collect_clan_details(interaction, clan_type, min_th):
         await msg.delete()
 
         # 4. Logo
-        await interaction.followup.send("Paste the **Clan Logo URL** (Image Link):", ephemeral=True)
-        msg = await interaction.client.wait_for('message', check=check, timeout=60)
-        logo = msg.content
-        await msg.delete()
+        await interaction.followup.send("Please upload the **Clan Logo** (Attachment) or paste a **Permanent URL**:", ephemeral=True)
+        msg_logo = await interaction.client.wait_for('message', check=check, timeout=60)
+        
+        logo = None
+        if msg_logo.attachments:
+            # Re-upload to the channel to ensure persistence
+            try:
+                # Create a file object from the attachment
+                file = await msg_logo.attachments[0].to_file()
+                # Send it back to the channel (non-ephemeral) so it persists
+                asset_msg = await interaction.channel.send(content=f"**[Asset]** Logo for {name} ({tag})", file=file)
+                logo = asset_msg.attachments[0].url
+            except Exception as e:
+                print(f"Failed to re-upload logo asset: {e}")
+                # Fallback to original url (might expire if msg is deleted)
+                logo = msg_logo.attachments[0].url
+        else:
+            logo = msg_logo.content
+            
+        await msg_logo.delete()
 
         # 5. Leader
         await interaction.followup.send("Mention the **Clan Leader** (e.g., @User):", ephemeral=True)
@@ -258,7 +274,7 @@ class ClanFieldSelectionView(discord.ui.View):
     @discord.ui.select(placeholder="Select Field to Edit", options=[
         discord.SelectOption(label="Clan Name", value="name"),
         discord.SelectOption(label="Clan Tag", value="clan_tag"),
-        discord.SelectOption(label="Clan Type", value="type", description="Regular or Cruise"),
+        discord.SelectOption(label="Clan Type", value="type", description="Regular or Feeder"),
         discord.SelectOption(label="Min Town Hall", value="min_th"),
         discord.SelectOption(label="Leader ID", value="leader_id"),
         discord.SelectOption(label="Leadership Role ID", value="leadership_role_id"),
@@ -270,6 +286,38 @@ class ClanFieldSelectionView(discord.ui.View):
         field_label = next(opt.label for opt in select.options if opt.value == field_key)
         current_value = self.clan_data.get(field_key, "")
         
+        if field_key == "logo_url":
+            # Special handling for Logo to allow attachments
+            await interaction.response.send_message("Please upload the new **Clan Logo** (Attachment) or paste a **Permanent URL**:", ephemeral=True)
+            
+            def check(m):
+                return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
+
+            try:
+                msg_logo = await interaction.client.wait_for('message', check=check, timeout=60)
+                
+                logo = None
+                if msg_logo.attachments:
+                    # Re-upload logic
+                    try:
+                        file = await msg_logo.attachments[0].to_file()
+                        asset_msg = await interaction.channel.send(content=f"**[Asset]** Logo for {self.clan_data['name']} ({self.clan_data['clan_tag']})", file=file)
+                        logo = asset_msg.attachments[0].url
+                    except Exception as e:
+                        print(f"Failed to re-upload logo asset: {e}")
+                        logo = msg_logo.attachments[0].url
+                else:
+                    logo = msg_logo.content
+                
+                await msg_logo.delete()
+                
+                await mongo_manager.update_clan_field(self.clan_data['clan_tag'], "logo_url", logo)
+                await interaction.followup.send(f"✅ Updated **Logo URL** successfully.", ephemeral=True)
+                
+            except asyncio.TimeoutError:
+                await interaction.followup.send("Timed out. Edit cancelled.", ephemeral=True)
+            return
+
         await interaction.response.send_modal(SingleFieldModal(self.clan_data['clan_tag'], field_key, field_label, current_value))
 
 class SingleFieldModal(discord.ui.Modal):

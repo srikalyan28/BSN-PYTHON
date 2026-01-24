@@ -53,11 +53,6 @@ class TicketSystemCog(commands.Cog):
                     if c.get('capital_hall') != capital_hall:
                         updates["capital_hall"] = capital_hall
 
-                    # Badge URL (Fallback)
-                    badge_url = clan_details.badge.url
-                    if c.get('badge_url') != badge_url:
-                        updates["badge_url"] = badge_url
-                    
                     # Apply Updates
                     if updates:
                         for field, value in updates.items():
@@ -145,6 +140,11 @@ class TicketSystemCog(commands.Cog):
         
         for i, acc in enumerate(session_data["accounts"]):
             clan_tag = acc.get("selected_clan_tag")
+            
+            if clan_tag == "rejected" or clan_tag == "none":
+                 summary_embed.add_field(name=f"Account: {acc['name']}", value="Status: Auto-Rejected (No suitable clan)", inline=False)
+                 continue
+
             clan = next((c for c in clans if c['clan_tag'] == clan_tag), None)
             
             clan_name = clan['name'] if clan else "None"
@@ -528,7 +528,7 @@ class ClanTypeSelectionView(discord.ui.View):
 
     @discord.ui.select(placeholder="Select Clan Type", options=[
         discord.SelectOption(label="Regular", value="Regular"),
-        discord.SelectOption(label="Cruise", value="Cruise")
+        discord.SelectOption(label="Feeder", value="Feeder")
     ])
     async def select_type(self, interaction: discord.Interaction, select: discord.ui.Select):
         clan_type = select.values[0]
@@ -615,9 +615,23 @@ class ClanSelectionView(discord.ui.View):
     @discord.ui.select(placeholder="Select Clan")
     async def select_clan(self, interaction: discord.Interaction, select: discord.ui.Select):
         clan_tag = select.values[0]
-        self.session_data["accounts"][self.account_index]["selected_clan_tag"] = clan_tag
         
-        await interaction.response.edit_message(content=f"Selected clan: {clan_tag}", view=None)
+        if clan_tag == "none":
+            # REJECTION FLOW
+            acc = self.session_data["accounts"][self.account_index]
+            
+            # Send Rejection Embed directly to user (Ephemeral or DMs? User asked for "reject player thing")
+            # Usually strict rejection is sent to the thread/channel.
+            rejection_embed = create_rejection_embed("Blackspire Nation", self.session_data["user_id"])
+            await interaction.channel.send(content=f"<@{self.session_data['user_id']}>", embed=rejection_embed)
+            
+            await interaction.response.send_message(f"Marked {acc['name']} as rejected due to no suitable clans.", ephemeral=True)
+            
+            # Mark as rejected in session data (or just don't add selected_clan_tag)
+            self.session_data["accounts"][self.account_index]["selected_clan_tag"] = "rejected"
+        else:
+            self.session_data["accounts"][self.account_index]["selected_clan_tag"] = clan_tag
+            await interaction.response.edit_message(content=f"Selected clan: {clan_tag}", view=None)
         
         # Next account
         await self.cog_instance.start_clan_selection(interaction, self.session_data, self.account_index + 1)
@@ -631,7 +645,7 @@ class ApprovalView(discord.ui.View):
         # Add dynamic buttons for each account
         for i, acc in enumerate(session_data["accounts"]):
             clan_tag = acc.get("selected_clan_tag")
-            if clan_tag and clan_tag != "none":
+            if clan_tag and clan_tag != "none" and clan_tag != "rejected":
                 clan = next((c for c in clans if c['clan_tag'] == clan_tag), None)
                 clan_name = clan['name'] if clan else clan_tag
                 
@@ -660,44 +674,14 @@ class ApprovalView(discord.ui.View):
             
             acc = self.session_data["accounts"][index]
             
-            # Determine Logo URL (Validate Custom Logo, Fallback to Badge)
+            # Use Logo URL directly (User explicitly requested NO fallback to badge)
             logo_url = clan.get('logo_url')
-            badge_url = clan.get('badge_url')
-            
-            # If badge_url is missing in DB (legacy data), try to fetch it now
-            if not badge_url:
-                try:
-                    fetched_clan = await coc_api.get_clan(clan['clan_tag'])
-                    if fetched_clan:
-                        badge_url = fetched_clan.badge.url
-                        # Opportunistic update
-                        await mongo_manager.update_clan_field(clan['clan_tag'], "badge_url", badge_url)
-                except:
-                    pass
-
-            final_logo_url = logo_url
-            use_fallback = False
-
-            if not logo_url:
-                use_fallback = True
-            else:
-                # Check if logo_url is valid/accessible
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.head(logo_url, timeout=5) as resp:
-                            if resp.status >= 400:
-                                use_fallback = True
-                except:
-                    use_fallback = True
-            
-            if use_fallback and badge_url:
-                final_logo_url = badge_url
             
             embed = create_invite_embed(
                 clan_name=clan['name'],
                 leader_id=clan.get('leader_id'),
                 leadership_role_id=clan.get('leadership_role_id'),
-                logo_url=final_logo_url,
+                logo_url=logo_url,
                 inviter_mention=interaction.user.mention
             )
             
