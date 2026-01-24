@@ -121,26 +121,18 @@ class TicketSystemCog(commands.Cog):
         # Wrapper to use interaction.channel
         await self.send_clan_selection(interaction.channel, session_data, account_index)
 
-    async def send_clan_selection(self, channel, session_data, account_index):
+    async def send_clan_selection(self, channel, session_data, account_index, is_reselection=False):
         if account_index >= len(session_data["accounts"]):
             # All selections made
-            # We need an interaction to call submit_application, or we change submit_application to take channel?
-            # submit_application uses interaction.guild.get_thread and interaction.channel.send
-            # We can find the thread from session_data["thread_id"].
-            # Let's try to reconstruct a context or just modify submit_application to take (guild, channel, session_data)
-            
-            # For now, let's look at submit_application.
-            # It needs interaction for: interaction.guild, interaction.channel (for confirmation msg).
-            # If we come from 'Pass', we are in the thread? No, 'Pass' sends menu to main_channel.
-            # So channel IS the main_channel.
-            # We can use channel.guild.
             await self.submit_application_channel(channel, session_data)
             return
 
         acc = session_data["accounts"][account_index]
         
-        # SKIP IF REJECTED
-        if acc.get("selected_clan_tag") == "rejected":
+        # SKIP IF REJECTED (unless it's a specific re-selection, in which case we process it)
+        # If is_reselection is True, we assume we are targeting this specific account, so we don't auto-skip
+        # unless we explicitly want to logic check. But for re-selection, user is picking a new one.
+        if not is_reselection and acc.get("selected_clan_tag") == "rejected":
              await self.send_clan_selection(channel, session_data, account_index + 1)
              return
 
@@ -196,11 +188,16 @@ class TicketSystemCog(commands.Cog):
             
             # Mark as rejected
             session_data["accounts"][account_index]["selected_clan_tag"] = "rejected"
+            
+            if is_reselection:
+                 await channel.send(f"⚠️ **{acc['name']}** still does not meet criteria for any available clans.")
+                 return
+
             await self.send_clan_selection(channel, session_data, account_index + 1)
             return
 
         embed = discord.Embed(title=f"Select Clan for {acc['name']}", description="Please choose from the available clans below.", color=discord.Color.purple())
-        view = ClanSelectionView(session_data, account_index, regular_clans, feeder_clans, self)
+        view = ClanSelectionView(session_data, account_index, regular_clans, feeder_clans, self, is_reselection)
         await channel.send(embed=embed, view=view)
 
     async def submit_application(self, interaction, session_data):
@@ -253,6 +250,34 @@ class TicketSystemCog(commands.Cog):
         confirm_embed.set_footer(text="Clash On! ⚔️")
         
         await channel.send(embed=confirm_embed)
+
+    async def submit_reapplication(self, interaction, session_data, account_index):
+        # Notify thread about re-application
+        thread = interaction.guild.get_thread(session_data["thread_id"])
+        acc = session_data["accounts"][account_index]
+        clan_tag = acc.get("selected_clan_tag")
+        
+        # We need to fetch clan name
+        clans = await mongo_manager.get_clans()
+        clan = next((c for c in clans if c['clan_tag'] == clan_tag), None)
+        clan_name = clan['name'] if clan else clan_tag
+        
+        reapp_embed = discord.Embed(title="🔄 Account Re-Applied", color=discord.Color.orange())
+        reapp_embed.add_field(name="Account", value=f"{acc['name']} ({acc['tag']})")
+        reapp_embed.add_field(name="New Choice", value=clan_name)
+        
+        mentions = []
+        if clan:
+             if 'leader_id' in clan: mentions.append(f"<@{clan['leader_id']}>")
+             if 'leadership_role_id' in clan: mentions.append(f"<@&{clan['leadership_role_id']}>")
+             
+        await thread.send(content=f"Update! {' '.join(set(mentions))}", embed=reapp_embed)
+        
+        # Send NEW Approval View (it will filter out already accepted ones)
+        await thread.send("Leadership Action:", view=ApprovalView(session_data, clans))
+        
+        # Confirm to user
+        await interaction.channel.send(f"✅ Re-submitted **{acc['name']}** to **{clan_name}**.")
 
 class ContinentView(discord.ui.View):
     def __init__(self, owner_id):
@@ -644,11 +669,12 @@ async def finalize_collection_standalone(interaction, session_data):
         await cog.ask_question(interaction, session_data, questions, 0)
 
 class ClanSelectionView(discord.ui.View):
-    def __init__(self, session_data, account_index, regular_clans, feeder_clans, cog_instance):
+    def __init__(self, session_data, account_index, regular_clans, feeder_clans, cog_instance, is_reselection=False):
         super().__init__(timeout=None)
         self.session_data = session_data
         self.account_index = account_index
         self.cog_instance = cog_instance
+        self.is_reselection = is_reselection
         
         options = []
         
@@ -723,10 +749,16 @@ class ClanSelectionView(discord.ui.View):
             self.session_data["accounts"][self.account_index]["selected_clan_tag"] = "rejected"
         else:
             self.session_data["accounts"][self.account_index]["selected_clan_tag"] = clan_tag
+            # Reset status to pending just in case
+            self.session_data["accounts"][self.account_index]["status"] = "pending"
             await interaction.response.edit_message(content=f"Selected clan: {clan_tag}", view=None)
         
-        # Next account
-        await self.cog_instance.start_clan_selection(interaction, self.session_data, self.account_index + 1)
+        if self.is_reselection:
+            # STOP LOOP, PROCESS RE-APP
+            await self.cog_instance.submit_reapplication(interaction, self.session_data, self.account_index)
+        else:
+            # Next account
+            await self.cog_instance.start_clan_selection(interaction, self.session_data, self.account_index + 1)
 
 class ApprovalView(discord.ui.View):
     def __init__(self, session_data, clans):
@@ -736,6 +768,11 @@ class ApprovalView(discord.ui.View):
         
         # Add dynamic buttons for each account
         for i, acc in enumerate(session_data["accounts"]):
+            # Check status - if already accepted/rejected, don't show buttons
+            status = acc.get("status", "pending")
+            if status != "pending":
+                continue
+
             clan_tag = acc.get("selected_clan_tag")
             if clan_tag and clan_tag != "none" and clan_tag != "rejected":
                 clan = next((c for c in clans if c['clan_tag'] == clan_tag), None)
@@ -786,6 +823,9 @@ class ApprovalView(discord.ui.View):
             if main_channel:
                 await main_channel.send(content=f"Clan Invitation for <@{self.session_data['user_id']}>", embed=embed, view=view)
             
+            # Mark as accepted
+            self.session_data["accounts"][index]["status"] = "accepted"
+
             await interaction.response.send_message(f"Accepted {acc['name']}!", ephemeral=True)
             
             # Disable buttons for this account
@@ -816,11 +856,11 @@ class ApprovalView(discord.ui.View):
                 # Reverted to simple message as requested
                 await main_channel.send(f"Sorry <@{self.session_data['user_id']}>, your application for {acc['name']} to {clan['name']} was passed. Please select another clan.")
             
-            # Re-trigger selection for this account
+            # Re-trigger selection for this account ONLY (is_reselection=True)
             cog = interaction.client.get_cog("TicketSystemCog")
             if cog and main_channel:
-                 # Call the new send_clan_selection method
-                 await cog.send_clan_selection(main_channel, self.session_data, index)
+                 # Call with is_reselection=True to prevent loop
+                 await cog.send_clan_selection(main_channel, self.session_data, index, is_reselection=True)
 
             await interaction.response.send_message(f"Passed {acc['name']}.", ephemeral=True)
             
