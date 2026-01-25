@@ -135,9 +135,25 @@ class OurClansCog(commands.Cog):
         in_game_desc = details.description
         leaders_note = clan.get('leaders_note', '')
         
-        # Save League to DB for Dropdown usage
+        
+        # Save League, Min TH, CH Level to DB for Dropdown usage
         war_league_name = details.war_league.name if details.war_league else "Unranked"
+        min_th = details.required_townhall
+        
+        # CH Level Logic
+        ch_level = "0"
+        ch_lvl_val = getattr(details, "capital_hall_level", None)
+        if ch_lvl_val:
+             ch_level = str(ch_lvl_val)
+        elif hasattr(details, 'capital_districts'):
+             for d in details.capital_districts:
+                 if d.name == "Capital Peak":
+                     ch_level = str(d.hall_level)
+                     break
+
         await mongo_manager.update_clan_field(clan['clan_tag'], "war_league", war_league_name)
+        await mongo_manager.update_clan_field(clan['clan_tag'], "min_th", min_th)
+        await mongo_manager.update_clan_field(clan['clan_tag'], "ch_level", ch_level)
         
         # Images
         badge_url = details.badge.url
@@ -398,8 +414,20 @@ class CategorySelectView(discord.ui.View):
                 if found_emoji:
                     emoji = found_emoji
 
-            # Description (League only, no Tag)
-            desc = f"{c.get('war_league', 'Unranked')}"
+            # Description construction
+            # Format: 🏆 {League} | 🏠 TH{Min}+ | 🛖 CH {Lvl}
+            
+            league_text = f"{c.get('war_league', 'Unranked')}"
+            min_th = c.get('min_th', 1)
+            ch_level = c.get('ch_level', '0')
+            
+            # TH Emoji for description
+            th_emoji = "🏠"
+            if self.bot and min_th >= 9:
+                 found = discord.utils.get(self.bot.emojis, name=f"th{min_th}")
+                 if found: th_emoji = str(found)
+            
+            desc = f'{league_text} | {th_emoji} TH{min_th}+ | 🛖 CH {ch_level}'
             options.append(discord.SelectOption(label=c['name'], value=c['clan_tag'], description=desc, emoji=emoji))
             
         self.select_clan.options = options[:25]
