@@ -598,6 +598,49 @@ class SingleFieldModal(discord.ui.Modal):
 
         await interaction.response.send_message(f"✅ Updated **{self.field_key}** to `{new_value}`.", ephemeral=True)
 
+class ClanVisibilityView(discord.ui.View):
+    def __init__(self, clans):
+        super().__init__(timeout=None)
+        self.clans = clans
+        
+        # Determine max clans per page if we were paginating, but for now just show all or max 25
+        # Select Menu with Multi-Select? Or Checkboxes (not supported)?
+        # Using a Multi-Select Menu to toggle visibility is cleanest given 25 limit.
+        
+        options = []
+        for clan in self.clans[:25]:
+            is_visible = clan.get('hidden', False) == False
+            label = f"{'👁️' if is_visible else '🙈'} {clan['name']}"
+            desc = f"Currently {'Visible' if is_visible else 'Hidden'}"
+            options.append(discord.SelectOption(label=label, value=clan['clan_tag'], description=desc))
+            
+        self.add_item(ClanVisibilitySelect(options))
+
+class ClanVisibilitySelect(discord.ui.Select):
+    def __init__(self, options):
+        super().__init__(placeholder="Toggle Clan Visibility...", min_values=1, max_values=len(options), options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_tags = self.values
+        # Toggle logic: If it was hidden, make visible. If visible, make hidden?
+        # Or simpler: The selection simply inverts whatever state it currently is in?
+        # Actually user wants to "Select clans to be VISIBLE (uncheck to hide)" style?
+        # Discord select doesn't persist checks nicely.
+        # Let's just flip the status of selected clans.
+        
+        c = 0
+        for tag in selected_tags:
+            # Fetch current
+             clans = await mongo_manager.get_clans()
+             clan = next((c for c in clans if c['clan_tag'] == tag), None)
+             if clan:
+                 current_hidden = clan.get('hidden', False)
+                 new_hidden = not current_hidden
+                 await mongo_manager.update_clan_field(tag, "hidden", new_hidden)
+                 c += 1
+        
+        await interaction.response.send_message(f"Toggled visibility for {c} clans. Please reload the menu to see updates.", ephemeral=True)
+
 class QuestionsModal(discord.ui.Modal, title="Configure Interview Questions"):
     questions = discord.ui.TextInput(label="Questions (One per line)", style=discord.TextStyle.paragraph, placeholder="Enter questions here...")
 
