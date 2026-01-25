@@ -227,7 +227,8 @@ class DirectoryEditView(discord.ui.View):
     @discord.ui.select(placeholder="Edit Field", options=[
         discord.SelectOption(label="Status", value="status"),
         discord.SelectOption(label="Category", value="category"),
-        discord.SelectOption(label="Description", value="description"),
+        discord.SelectOption(label="Status", value="status"),
+        discord.SelectOption(label="Category", value="category"),
         discord.SelectOption(label="Leaders Note", value="leaders_note")
     ])
     async def select_field(self, interaction: discord.Interaction, select: discord.ui.Select):
@@ -239,8 +240,9 @@ class DirectoryEditView(discord.ui.View):
         elif field == "category":
              await interaction.response.send_message("Select New Category:", view=SimpleUpdateView(self.clan['clan_tag'], "category", ["Main", "Feeder", "Farming", "Trial"]), ephemeral=True)
         else:
+        else:
             # Modal for text fields
-            label = "Clan Description" if field == "description" else "Leaders Note"
+            label = "Leaders Note"
             modal = SingleFieldModal(self.clan['clan_tag'], field, label, self.clan.get(field, ""))
             await interaction.response.send_modal(modal)
 
@@ -540,7 +542,11 @@ class SingleFieldModal(discord.ui.Modal):
         self.clan_tag = clan_tag
         self.field_key = field_key
         
-        self.input = discord.ui.TextInput(label=field_label, default=str(current_value), required=True)
+        style = discord.TextStyle.short
+        if field_key == "leaders_note":
+            style = discord.TextStyle.paragraph
+            
+        self.input = discord.ui.TextInput(label=field_label, default=str(current_value), required=True, style=style)
         self.add_item(self.input)
 
     async def on_submit(self, interaction: discord.Interaction):

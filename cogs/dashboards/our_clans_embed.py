@@ -221,8 +221,8 @@ class OurClansCog(commands.Cog):
         if th_str_parts:
              embed.add_field(name="Townhall Breakdown", value=" | ".join(th_str_parts), inline=False)
 
-        if th_str_parts:
-             embed.add_field(name="Townhall Breakdown", value=" | ".join(th_str_parts), inline=False)
+             
+        # Big Image: Custom Logo (Dragon Shield etc) - Main Embed
              
         # Big Image: Custom Logo (Dragon Shield etc) - Main Embed
         if custom_logo:
