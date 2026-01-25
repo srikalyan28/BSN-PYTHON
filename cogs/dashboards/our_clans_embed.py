@@ -415,19 +415,13 @@ class CategorySelectView(discord.ui.View):
                     emoji = found_emoji
 
             # Description construction
-            # Format: 🏆 {League} | 🏠 TH{Min}+ | 🛖 CH {Lvl}
+            # Format: 🏆 {League} | TH{Min}+ | CH {Lvl}
             
             league_text = f"{c.get('war_league', 'Unranked')}"
             min_th = c.get('min_th', 1)
             ch_level = c.get('ch_level', '0')
             
-            # TH Emoji for description
-            th_emoji = "🏠"
-            if self.bot and min_th >= 9:
-                 found = discord.utils.get(self.bot.emojis, name=f"th{min_th}")
-                 if found: th_emoji = str(found)
-            
-            desc = f'{league_text} | {th_emoji} TH{min_th}+ | 🛖 CH {ch_level}'
+            desc = f'{league_text} | TH{min_th}+ | CH {ch_level}'
             options.append(discord.SelectOption(label=c['name'], value=c['clan_tag'], description=desc, emoji=emoji))
             
         self.select_clan.options = options[:25]
