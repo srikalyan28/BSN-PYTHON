@@ -4,6 +4,7 @@ from discord import app_commands
 import os
 from utils.mongo_manager import mongo_manager
 from utils.coc_api import coc_api
+import coc
 import asyncio
 from datetime import datetime
 
