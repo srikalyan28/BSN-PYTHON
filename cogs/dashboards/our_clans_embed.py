@@ -170,25 +170,38 @@ class OurClansCog(commands.Cog):
             # Logic: Remove "League", remove spaces, map Roman numerals
             s = name.replace(" League", "").strip() # "Crystal I"
             
+            # Special Case: Gold League
+            # User Rule: Gold1 -> Gold1, Gold2/3 -> Gold2
+            if "Gold" in name:
+                if " I" in name and "II" not in name: return "Gold1" # Ends with I but not II/III... tricky.
+                if name.endswith(" I"): return "Gold1"
+                return "Gold2" # Default for Gold II and III
+            
             # Map Roman to Arabic
             roman_map = {"I": "1", "II": "2", "III": "3"}
             parts = s.split(" ")
             if len(parts) == 2 and parts[1] in roman_map:
                 return f"{parts[0]}{roman_map[parts[1]]}" # "Crystal" + "1" -> "Crystal1"
             
-            # Fallback for "Legend League" -> "Legend" ? User didn't specify, assuming "Legend" or standard sanitization
             return s.replace(" ", "")
 
         def get_th_emoji(th_level):
-             # User said: "town hall till 9 are uploaded . for annything below use any house emoji"
-             # Assuming TH9 is uploaded as th9. Below 9 (8,7...) use house.
-             if int(th_level) < 9: return "🏠"
+             # User Rules:
+             # TH 1-6 -> :th6_1:
+             # TH 7 -> :th7:
+             # TH 8 -> :th8:
+             # TH 9+ -> :th{level}:
              
-             # Try th{level} e.g. th17, th18, th9
-             e = get_emoji_str(f"th{th_level}")
+             lvl = int(th_level)
+             if lvl <= 6:
+                 e = get_emoji_str("th6_1")
+                 return e if e else "🏠"
+             
+             # Try th{level} e.g. th17, th18, th9, th8, th7
+             e = get_emoji_str(f"th{lvl}")
              if e: return e
              
-             return f"**TH{th_level}**"
+             return f"**TH{lvl}**"
         
         # Determine Footer Asset based on Category
         category = clan.get('category', 'Trial').lower()
