@@ -90,13 +90,13 @@ class CloneWizardRoleMapping(discord.ui.View):
     async def select_member(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
         self.old_member_role = select.values[0]
         self.check_complete()
-        await interaction.response.defer()
+        await interaction.response.edit_message(view=self)
 
     @discord.ui.select(cls=discord.ui.RoleSelect, placeholder="Select TEMPLATE Leader Role")
     async def select_leader(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
         self.old_leader_role = select.values[0]
         self.check_complete()
-        await interaction.response.defer()
+        await interaction.response.edit_message(view=self)
 
     def check_complete(self):
         if self.old_member_role and self.old_leader_role:
