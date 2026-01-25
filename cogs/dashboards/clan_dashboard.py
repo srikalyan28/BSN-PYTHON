@@ -227,8 +227,6 @@ class DirectoryEditView(discord.ui.View):
     @discord.ui.select(placeholder="Edit Field", options=[
         discord.SelectOption(label="Status", value="status"),
         discord.SelectOption(label="Category", value="category"),
-        discord.SelectOption(label="Status", value="status"),
-        discord.SelectOption(label="Category", value="category"),
         discord.SelectOption(label="Leaders Note", value="leaders_note")
     ])
     async def select_field(self, interaction: discord.Interaction, select: discord.ui.Select):
