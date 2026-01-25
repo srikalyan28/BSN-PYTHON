@@ -135,21 +135,43 @@ class OurClansCog(commands.Cog):
         in_game_desc = details.description
         leaders_note = clan.get('leaders_note', '')
         
+        # Save League to DB for Dropdown usage
+        war_league_name = details.war_league.name if details.war_league else "Unranked"
+        await mongo_manager.update_clan_field(clan['clan_tag'], "war_league", war_league_name)
+        
         # Images
         badge_url = details.badge.url
         custom_logo = clan.get('logo_url', '')
 
         # Helper to get emoji
+        # Helper to get emoji
         def get_emoji_str(name):
              emoji = discord.utils.get(self.bot.emojis, name=name)
              return str(emoji) if emoji else ""
 
+        def map_league_name(name):
+            # Maps API "Crystal League I" -> User's "Crystal1"
+            # Logic: Remove "League", remove spaces, map Roman numerals
+            s = name.replace(" League", "").strip() # "Crystal I"
+            
+            # Map Roman to Arabic
+            roman_map = {"I": "1", "II": "2", "III": "3"}
+            parts = s.split(" ")
+            if len(parts) == 2 and parts[1] in roman_map:
+                return f"{parts[0]}{roman_map[parts[1]]}" # "Crystal" + "1" -> "Crystal1"
+            
+            # Fallback for "Legend League" -> "Legend" ? User didn't specify, assuming "Legend" or standard sanitization
+            return s.replace(" ", "")
+
         def get_th_emoji(th_level):
-             # Try th{level} e.g. th17, th18
+             # User said: "town hall till 9 are uploaded . for annything below use any house emoji"
+             # Assuming TH9 is uploaded as th9. Below 9 (8,7...) use house.
+             if int(th_level) < 9: return "🏠"
+             
+             # Try th{level} e.g. th17, th18, th9
              e = get_emoji_str(f"th{th_level}")
              if e: return e
-             # Fallback for lower THs or missing emojis
-             if int(th_level) <= 9: return "🏠" 
+             
              return f"**TH{th_level}**"
         
         # Determine Footer Asset based on Category
@@ -201,8 +223,8 @@ class OurClansCog(commands.Cog):
         
         # Leagues
         war_league_name = details.war_league.name if details.war_league else "Unranked"
-        # Try to match emoji: "Master League II" -> "Master_League_II"
-        league_emoji_name = war_league_name.replace(" ", "_")
+        # Map Name: "Master League II" -> "Master2"
+        league_emoji_name = map_league_name(war_league_name)
         league_emoji = get_emoji_str(league_emoji_name)
         
         stats_lines.append(f"🏆 {league_emoji} **{war_league_name}**")
@@ -301,7 +323,8 @@ class OurClansView(discord.ui.View):
             return
             
         # Send Dropdown View
-        view = CategorySelectView(matches, category, self, interaction.guild)
+        # Pass interaction.client (bot) to search global/application emojis
+        view = CategorySelectView(matches, category, self, interaction.client)
         await interaction.response.send_message(f"**{category} Clans**\nSelect a clan to view details:", view=view, ephemeral=True)
 
     @discord.ui.button(label="Main Clans", custom_id="dir_main", style=discord.ButtonStyle.primary, emoji="🛡️")
@@ -321,12 +344,12 @@ class OurClansView(discord.ui.View):
         await self.show_clans(interaction, "Trial")
 
 class CategorySelectView(discord.ui.View):
-    def __init__(self, clans, category, cog_view, guild):
+    def __init__(self, clans, category, cog_view, bot):
         super().__init__(timeout=180) # Ephemeral views expire
         self.clans = clans
         self.category = category
         self.cog_view = cog_view 
-        self.guild = guild
+        self.bot = bot
         
         # Sort by CWL
         cwl_order = {
@@ -345,18 +368,35 @@ class CategorySelectView(discord.ui.View):
         
         options = []
         for c in self.clans:
-            # Emoji Logic: Try to find a custom emoji matching Clan Name or Tag
-            # Sanitize name: "Indo Clan Lords" -> "indoclanlords"
-            emoji = "🛡️" # Default
+            # Emoji Logic: 
+            # 1. Custom Clan Emoji (Name/Tag)
+            # 2. League Emoji (Application/Global)
+            # 3. Default Shield
+            
+            emoji = "🛡️" 
             sanitized_name = c['name'].replace(" ", "").lower()
             sanitized_tag = c['clan_tag'].replace("#", "").lower()
             
-            # Search guild emojis
-            if self.guild:
-                found_emoji = discord.utils.get(self.guild.emojis, name=sanitized_name)
+            # Use Mapping Logic locally for dropdown
+            raw_league = c.get('war_league', 'Unranked')
+            # Reuse map logic (simplified here or copy/paste? better to not duplicate complex logic but short lookup is fine)
+            s = raw_league.replace(" League", "").strip()
+            roman_map = {"I": "1", "II": "2", "III": "3"}
+            parts = s.split(" ")
+            league_emoji_name = s.replace(" ", "")
+            if len(parts) == 2 and parts[1] in roman_map:
+                league_emoji_name = f"{parts[0]}{roman_map[parts[1]]}"
+            
+            if self.bot:
+                # Priority 1: Clan Name/Tag Emoji
+                found_emoji = discord.utils.get(self.bot.emojis, name=sanitized_name)
                 if not found_emoji:
-                    found_emoji = discord.utils.get(self.guild.emojis, name=sanitized_tag)
+                    found_emoji = discord.utils.get(self.bot.emojis, name=sanitized_tag)
                 
+                # Priority 2: League Emoji (if no clan emoji)
+                if not found_emoji:
+                     found_emoji = discord.utils.get(self.bot.emojis, name=league_emoji_name)
+
                 if found_emoji:
                     emoji = found_emoji
 
