@@ -58,11 +58,14 @@ class OurClansCog(commands.Cog):
             thread = await channel.create_thread(name=f"{clan['name']} ({clan['clan_tag']})", type=discord.ChannelType.public_thread)
             
             # Fetch stats for embed
-            embed = await self.build_clan_embed(clan)
+            embed, file = await self.build_clan_embed(clan)
             
             # Send and Pin
-            msg = await thread.send(embed=embed)
-            await msg.pin()
+            if embed and file:
+                msg = await thread.send(embed=embed, file=file)
+                await msg.pin()
+            else:
+                return False, "Failed to build embed/file."
             
             # Save IDs
             await mongo_manager.update_clan_field(clan_tag, "thread_id", str(thread.id))
@@ -113,8 +116,11 @@ class OurClansCog(commands.Cog):
                 
             msg = await thread.fetch_message(int(clan['embed_message_id']))
             if msg:
-                embed = await self.build_clan_embed(clan)
-                await msg.edit(embed=embed)
+                embed, file = await self.build_clan_embed(clan)
+                if embed and file:
+                    # To update attachments, we must pass the new file and clear the old ones?
+                    # edit(attachments=[...]) replaces them.
+                    await msg.edit(embed=embed, attachments=[file])
         except Exception as e:
             print(f"Failed to update embed for {clan_tag}: {e}")
 
@@ -122,19 +128,48 @@ class OurClansCog(commands.Cog):
         # Fetch fresh data
         details = await coc_api.get_clan(clan['clan_tag'])
         if not details:
-            return discord.Embed(title=f"{clan['name']} ({clan['clan_tag']})", description="⚠️ API Data Unavailable", color=discord.Color.red())
+            return None, None
 
         name = details.name
         tag = details.tag
-        # In-game description
         in_game_desc = details.description
-        
-        # Custom Leader Note (from DB)
         leaders_note = clan.get('leaders_note', '')
         
         # Images
         badge_url = details.badge.url
         custom_logo = clan.get('logo_url', '')
+        
+        # Determine Footer Asset based on Category
+        category = clan.get('category', 'Trial').lower()
+        footer_file = "Gray_Footer.png"
+        
+        if "main" in category: footer_file = "Red_Footer.png"
+        elif "feeder" in category: footer_file = "Blue_Footer (1).png" # Or Purple? User said Blue/Purple. Let's guess Blue for now or check assets. 
+        # Assets: Blue_Footer (1).png, Purple_Footer.png. Usually Feeder is Blue or Purple.
+        # Let's map strict:
+        if category == "main": footer_file = "Red_Footer.png"
+        elif category == "feeder": footer_file = "Blue_Footer (1).png"
+        elif category == "farming": footer_file = "Green_Footer.png"
+        elif category == "trial": footer_file = "Orange_Footer.png"
+        
+        # Asset Path
+        file = discord.File(f"c:\\Users\\admin\\Desktop\\BSN PYTHON\\assets\\{footer_file}", filename=footer_file)
+
+        embed = discord.Embed(description="", color=discord.Color.dark_theme())
+        
+        # Author: Name (Tag)
+        embed.set_author(name=f"{name} ({tag})", icon_url=badge_url)
+        
+        # Thumbnail: Custom Logo (Prioritized) or Badge
+        if custom_logo:
+             embed.set_thumbnail(url=custom_logo)
+        else:
+             embed.set_thumbnail(url=badge_url)
+             
+        # Set Main Image to the Footer Banner
+        embed.set_image(url=f"attachment://{footer_file}")
+        
+        # Main Stats Block
 
         embed = discord.Embed(description="", color=discord.Color.dark_theme())
         
@@ -222,12 +257,12 @@ class OurClansCog(commands.Cog):
         if leaders_note:
             embed.add_field(name="Leader's Note", value=leaders_note, inline=False)
 
-        # Big Image: Custom Logo
-        if custom_logo:
-             embed.set_image(url=custom_logo)
+        if custom_logo and not embed.thumbnail:
+             # Fallback if I didn't set it above
+             embed.set_thumbnail(url=custom_logo)
 
         embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        return embed
+        return embed, file # Return tuple
 
     @tasks.loop(hours=1)
     async def update_clans_task(self):
@@ -251,10 +286,6 @@ class OurClansView(discord.ui.View):
 
     async def show_clans(self, interaction, category):
         clans = await mongo_manager.get_clans()
-        # Filter by category and status='family' (unless category is trial)
-        # Wait, requirement: "Query clans where status = family category = <button category> ... Trial Button show all clans where status = trial"
-        
-        matches = []
         matches = []
         if category == "Trial":
             matches = [c for c in clans if (c.get('status') or '').lower() == 'trial']
@@ -264,42 +295,10 @@ class OurClansView(discord.ui.View):
         if not matches:
             await interaction.response.send_message(f"No clans found in **{category}** category.", ephemeral=True)
             return
-
-        # SORTING: Order by CWL Rank (High to Low)
-        cwl_order = {
-            "Champion League I": 18, "Champion League II": 17, "Champion League III": 16,
-            "Master League I": 15, "Master League II": 14, "Master League III": 13,
-            "Crystal League I": 12, "Crystal League II": 11, "Crystal League III": 10,
-            "Gold League I": 9, "Gold League II": 8, "Gold League III": 7,
-            "Silver League I": 6, "Silver League II": 5, "Silver League III": 4,
-            "Bronze League I": 3, "Bronze League II": 2, "Bronze League III": 1,
-            "Unranked": 0
-        }
-
-        # Helper to get rank val
-        def get_rank_val(clan):
-            # We need to rely on the 'war_league' stored in DB for sorting without fetching API for all
-            league = clan.get('war_league', 'Unranked')
-            return cwl_order.get(league, 0)
-
-        matches.sort(key=get_rank_val, reverse=True)
             
-        desc = ""
-        for c in matches:
-            thread_id = c.get('thread_id')
-            league_emoji = "🏆"
-            league_name = c.get('war_league', 'Unranked')
-            # Using thread.mention for clickable link if possible, or manual URL
-            # Manual URL: https://discord.com/channels/{guild_id}/{thread_id} ?? No, threads are channels.
-            # So https://discord.com/channels/{guild_id}/{thread_id} is correct.
-            # But wait, create_thread returns a Thread object. thread.jump_url is safest.
-            # But we only stored ID. 
-            
-            link = f"https://discord.com/channels/{interaction.guild_id}/{thread_id}" if thread_id else "#"
-            desc += f"• **{c['name']}** ({league_name}) [view clan]({link})\n"
-            
-        embed = discord.Embed(title=f"{category} Clans (Sorted by CWL)", description=desc, color=discord.Color.purple())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        # Send Dropdown View
+        view = CategorySelectView(matches, category, self)
+        await interaction.response.send_message(f"**{category} Clans**\nSelect a clan to view details:", view=view, ephemeral=True)
 
     @discord.ui.button(label="Main Clans", custom_id="dir_main", style=discord.ButtonStyle.primary, emoji="🛡️")
     async def main_clans(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -316,6 +315,71 @@ class OurClansView(discord.ui.View):
     @discord.ui.button(label="Trial Clans", custom_id="dir_trial", style=discord.ButtonStyle.danger, emoji="🧪")
     async def trial_clans(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.show_clans(interaction, "Trial")
+
+class CategorySelectView(discord.ui.View):
+    def __init__(self, clans, category, cog_view):
+        super().__init__(timeout=180) # Ephemeral views expire
+        self.clans = clans
+        self.category = category
+        self.cog_view = cog_view # to access build_clan_embed? No, it's method of Cog. 
+        # Actually I can't easily access Cog method from here unless I pass Cog instance or look it up.
+        # I'll rely on `interaction.client.get_cog("OurClansCog")`.
+        
+        # Sort by CWL
+        cwl_order = {
+            "Champion League I": 18, "Champion League II": 17, "Champion League III": 16,
+            "Master League I": 15, "Master League II": 14, "Master League III": 13,
+            "Crystal League I": 12, "Crystal League II": 11, "Crystal League III": 10,
+            "Gold League I": 9, "Gold League II": 8, "Gold League III": 7,
+            "Silver League I": 6, "Silver League II": 5, "Silver League III": 4,
+            "Bronze League I": 3, "Bronze League II": 2, "Bronze League III": 1,
+            "Unranked": 0
+        }
+        def get_rank_val(clan):
+            league = clan.get('war_league', 'Unranked')
+            return cwl_order.get(league, 0)
+        self.clans.sort(key=get_rank_val, reverse=True)
+        
+        options = []
+        for c in self.clans:
+            # Emoji based on TH? or generic. 
+            # Description: "Tactical - #TAG"
+            
+            # Try to get better desc
+            desc = f"{c.get('war_league', 'Unranked')} - #{c['clan_tag']}"
+            options.append(discord.SelectOption(label=c['name'], value=c['clan_tag'], description=desc, emoji="🛡️"))
+            
+        self.select_clan.options = options[:25]
+
+    @discord.ui.select(placeholder="Select a clan to view details...")
+    async def select_clan(self, interaction: discord.Interaction, select: discord.ui.Select):
+        clan_tag = select.values[0]
+        
+        # Fetch Cog to use builder
+        cog = interaction.client.get_cog("OurClansCog")
+        if not cog:
+            await interaction.response.send_message("System Error.", ephemeral=True)
+            return
+            
+        # Get clan data from list
+        clan = next((c for c in self.clans if c['clan_tag'] == clan_tag), None)
+        if not clan: return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        embed, file = await cog.build_clan_embed(clan)
+        if not embed:
+             await interaction.followup.send("Failed to load clan details.", ephemeral=True)
+             return
+             
+        # Add Jump Button
+        view = discord.ui.View()
+        if clan.get('thread_id'):
+            url = f"https://discord.com/channels/{interaction.guild_id}/{interaction.channel_id}/{clan['thread_id']}"
+            view.add_item(discord.ui.Button(label="Visit Clan Thread", url=url, style=discord.ButtonStyle.link))
+        
+        # Send
+        await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(OurClansCog(bot))
