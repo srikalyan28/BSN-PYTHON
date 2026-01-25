@@ -160,27 +160,32 @@ async def perform_clone(interaction, target_clan, template_cat, old_member, old_
         new_abbrev = target_clan.get('clan_abbreviation', '').lower()
         template_abbrev = template_abbrev.lower()
         
-        for ch in template_cat.channels:
-            # Name Replacement
-            # "📝・tg-clan-info" -> "📝・icl-clan-info"
-            new_name = ch.name.lower().replace(template_abbrev, new_abbrev)
-            
-            # Perms
-            ch_overwrites = process_overwrites(ch.overwrites, old_member, old_leader, new_member_role, new_leader_role)
-            
-            if isinstance(ch, discord.TextChannel):
-                new_ch = await new_cat.create_text_channel(name=new_name, topic=ch.topic, overwrites=ch_overwrites, slowmode_delay=ch.slowmode_delay)
-            elif isinstance(ch, discord.VoiceChannel):
-                new_ch = await new_cat.create_voice_channel(name=new_name, overwrites=ch_overwrites, bitrate=ch.bitrate, user_limit=ch.user_limit)
-            elif isinstance(ch, discord.StageChannel):
-                 new_ch = await new_cat.create_stage_channel(name=new_name, topic=ch.topic, overwrites=ch_overwrites)
-            elif isinstance(ch, discord.ForumChannel):
-                 new_ch = await new_cat.create_forum_channel(name=new_name, topic=ch.topic, overwrites=ch_overwrites)
-            
-            report.append(f"Cloned {ch.name} -> **{new_name}**")
-            await asyncio.sleep(0.5) # Safe rate limit
-            
-        await interaction.followup.send(f"✅ **Cloning Complete for {target_clan['name']}!**\n" + "\n".join(report[:15]), ephemeral=True)
+        try:
+            for ch in template_cat.channels:
+                # Name Replacement
+                # "📝・tg-clan-info" -> "📝・icl-clan-info"
+                new_name = ch.name.lower().replace(template_abbrev, new_abbrev)
+                
+                # Perms
+                ch_overwrites = process_overwrites(ch.overwrites, old_member, old_leader, new_member_role, new_leader_role)
+                
+                if isinstance(ch, discord.TextChannel):
+                    new_ch = await new_cat.create_text_channel(name=new_name, topic=ch.topic, overwrites=ch_overwrites, slowmode_delay=ch.slowmode_delay)
+                elif isinstance(ch, discord.VoiceChannel):
+                    new_ch = await new_cat.create_voice_channel(name=new_name, overwrites=ch_overwrites, bitrate=ch.bitrate, user_limit=ch.user_limit)
+                elif isinstance(ch, discord.StageChannel):
+                     new_ch = await new_cat.create_stage_channel(name=new_name, topic=ch.topic, overwrites=ch_overwrites)
+                elif isinstance(ch, discord.ForumChannel):
+                     new_ch = await new_cat.create_forum_channel(name=new_name, topic=ch.topic, overwrites=ch_overwrites)
+                
+                report.append(f"Cloned {ch.name} -> **{new_name}**")
+                await asyncio.sleep(0.5) # Safe rate limit
+                
+            await interaction.followup.send(f"✅ **Cloning Complete for {target_clan['name']}!**\n" + "\n".join(report[:15]), ephemeral=True)
+
+        except Exception as e:
+            print(f"Clone Error: {e}")
+            await interaction.followup.send(f"❌ Critical Clone Error: {e}", ephemeral=True)
 
 
 def process_overwrites(overwrites, old_member, old_leader, new_member, new_leader):
