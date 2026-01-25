@@ -35,7 +35,7 @@ class OurClansCog(commands.Cog):
 
         embed = discord.Embed(
             title="BSN Clan Directory", 
-            description="Use the buttons below to find the perfect clan for you!\n\n🛡️ **Main Clans**: Competitive & War Focused\n🎓 **Feeder Clans**: Training & Development\n🌾 **Farming Clans**: Loot & Chill\n🧪 **Trial Clans**: New Additions", 
+            description="Use the buttons below to find the perfect clan for you!\n\n🛡️ **Main Clans**: Competitive & War Focused\n🎓 **Feeder Clans**: Training & Development\n🌾 **Farming Clans**: Loot & Chill\n🧪 **Trial Clans**: New Additions\n\n**Apply to join:** <#1440648795972046848>", 
             color=discord.Color.blue()
         )
         embed.set_footer(text="BlackSpire Nation • Updated Live")
@@ -148,13 +148,23 @@ class OurClansCog(commands.Cog):
         elif category == "farming": footer_file = "Green_Footer.png"
         elif category == "trial": footer_file = "Orange_Footer.png"
         
+        # Determine Color from Footer File Name
+        f_lower = footer_file.lower()
+        if "red" in f_lower: embed_color = discord.Color.red()
+        elif "blue" in f_lower: embed_color = discord.Color.blue()
+        elif "green" in f_lower: embed_color = discord.Color.green()
+        elif "orange" in f_lower: embed_color = discord.Color.orange()
+        elif "purple" in f_lower: embed_color = discord.Color.purple()
+        elif "gold" in f_lower or "yellow" in f_lower: embed_color = discord.Color.gold()
+        else: embed_color = discord.Color.dark_theme()
+        
         # Asset Path
         # Use relative path compatible with both Windows and Linux container
         asset_path = os.path.join(os.getcwd(), "assets", footer_file)
         file = discord.File(asset_path, filename=footer_file)
 
         # --- Main Embed (Content + Logo) ---
-        embed = discord.Embed(description="", color=discord.Color.dark_theme())
+        embed = discord.Embed(description="", color=embed_color)
         
         # Author: Name (Tag)
         embed.set_author(name=f"{name} ({tag})", icon_url=badge_url)
@@ -235,7 +245,7 @@ class OurClansCog(commands.Cog):
              embed.set_image(url=custom_logo)
          
         # --- Footer Embed (Banner + Apply Link) ---
-        footer_embed = discord.Embed(description="**Apply to join:** <#1440648795972046848>", color=discord.Color.dark_theme())
+        footer_embed = discord.Embed(color=embed_color)
         footer_embed.set_image(url=f"attachment://{footer_file}")
         footer_embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         
