@@ -51,7 +51,218 @@ class ClanDashboardView(discord.ui.View):
         view = ClanVisibilityView(clans)
         await interaction.response.send_message("Select clans to be **VISIBLE** (uncheck to hide):", view=view, ephemeral=True)
 
-class ClanVisibilityView(discord.ui.View):
+    @discord.ui.button(label="Manage Embeds", style=discord.ButtonStyle.success, custom_id="manage_embeds", row=1)
+    async def manage_embeds(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Entry point for Directory Management
+        embed = discord.Embed(title="Manage Clan Directory", description="Initiate, Edit, or Delete Clan Directory entries in #our-clans.", color=discord.Color.gold())
+        view = ManageClanEmbedsView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+class ManageClanEmbedsView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Initiate Directory", style=discord.ButtonStyle.primary, emoji="🚀")
+    async def initiate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        clans = await mongo_manager.get_clans()
+        if not clans:
+            await interaction.response.send_message("No clans found.", ephemeral=True)
+            return
+        
+        # Filter out clans that already have a thread_id (already initiated)
+        # Actually user said: "only one per clan... say directory already exists"
+        # So we show all, but check on selection.
+        view = DirectoryClanSelectView(clans, action="initiate")
+        await interaction.response.send_message("Select a clan to **Initiate** (Create Thread & Embed):", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Edit Directory", style=discord.ButtonStyle.secondary, emoji="✏️")
+    async def edit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        clans = await mongo_manager.get_clans()
+        # Filter for clans that HAVE a thread_id (are initiated)
+        initiated_clans = [c for c in clans if c.get('thread_id')]
+        
+        if not initiated_clans:
+            await interaction.response.send_message("No initiated clan directories found. Please Initiate one first.", ephemeral=True)
+            return
+        
+        view = DirectoryClanSelectView(initiated_clans, action="edit")
+        await interaction.response.send_message("Select a clan to **Edit**:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Delete Directory", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Owner check
+        if interaction.user.id != int(os.getenv("OWNER_ID")):
+             await interaction.response.send_message("You are not authorized to delete directories.", ephemeral=True)
+             return
+
+        clans = await mongo_manager.get_clans()
+        initiated_clans = [c for c in clans if c.get('thread_id')]
+        
+        if not initiated_clans:
+            await interaction.response.send_message("No initiated clan directories found.", ephemeral=True)
+            return
+
+        view = DirectoryClanSelectView(initiated_clans, action="delete")
+        await interaction.response.send_message("Select a clan to **Delete** (Remove Thread/Embed Data):", view=view, ephemeral=True)
+
+class DirectoryClanSelectView(discord.ui.View):
+    def __init__(self, clans, action):
+        super().__init__(timeout=None)
+        self.action = action
+        self.clans = clans
+        
+        options = []
+        for c in clans:
+             description = "Ready to Initiate"
+             if action == "initiate" and c.get('thread_id'):
+                 description = "⚠️ Already Initiated"
+             elif action == "edit":
+                 description = f"Status: {c.get('status', 'N/A')} | Cat: {c.get('category', 'N/A')}"
+             
+             options.append(discord.SelectOption(label=c['name'], value=c['clan_tag'], description=description))
+
+        # Discord limit 25
+        self.select_clan.options = options[:25]
+
+    @discord.ui.select(placeholder="Select Clan")
+    async def select_clan(self, interaction: discord.Interaction, select: discord.ui.Select):
+        clan_tag = select.values[0]
+        clan = next((c for c in self.clans if c['clan_tag'] == clan_tag), None)
+        
+        if not clan:
+            await interaction.response.send_message("Clan not found.", ephemeral=True)
+            return
+
+        if self.action == "initiate":
+            if clan.get('thread_id'):
+                await interaction.response.send_message(f"⚠️ **{clan['name']}** already has a directory entry. Use **Edit** to update it, or **Delete** to start fresh.", ephemeral=True)
+                return
+            
+            # Start Initiation Flow: Ask Status & Category
+            await interaction.response.send_message(f"Initiating Directory for **{clan['name']}**.\nPlease configured the details below:", view=DirectorySetupView(clan), ephemeral=True)
+        
+        elif self.action == "edit":
+            # Start Edit Flow
+            await interaction.response.send_message(f"Editing Directory for **{clan['name']}**:", view=DirectoryEditView(clan), ephemeral=True)
+
+        elif self.action == "delete":
+            # Delete Flow
+            # Remove thread_id, embed_message_id, status, category etc?
+            # User said "only me owner should be able to delete... remove directory fields"
+            # We don't necessarily delete the threads automatically unless requested, but let's clear DB fields.
+            await mongo_manager.update_clan_field(clan_tag, "thread_id", None)
+            await mongo_manager.update_clan_field(clan_tag, "embed_message_id", None)
+            await mongo_manager.update_clan_field(clan_tag, "status", None)
+            await mongo_manager.update_clan_field(clan_tag, "category", None)
+            await mongo_manager.update_clan_field(clan_tag, "description", None)
+            await mongo_manager.update_clan_field(clan_tag, "leaders_note", None)
+            
+            await interaction.response.send_message(f"🗑️ Directory data for **{clan['name']}** has been cleared.", ephemeral=True)
+
+class DirectorySetupView(discord.ui.View):
+    def __init__(self, clan):
+        super().__init__(timeout=None)
+        self.clan = clan
+        self.status = None
+        self.category = None
+    
+    @discord.ui.select(placeholder="Select Status", options=[
+        discord.SelectOption(label="Family", value="family", emoji="🛡️"),
+        discord.SelectOption(label="Trial", value="trial", emoji="🧪")
+    ])
+    async def select_status(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.status = select.values[0]
+        if self.status and self.category:
+            self.confirm_btn.disabled = False
+            await interaction.response.edit_message(view=self)
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.select(placeholder="Select Category", options=[
+        discord.SelectOption(label="Main", value="Main", emoji="🏰"),
+        discord.SelectOption(label="Feeder", value="Feeder", emoji="🎓"),
+        discord.SelectOption(label="Farming", value="Farming", emoji="🌾"),
+        discord.SelectOption(label="Trial", value="Trial", emoji="🧪")
+    ])
+    async def select_category(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.category = select.values[0]
+        if self.status and self.category:
+            self.confirm_btn.disabled = False
+            await interaction.response.edit_message(view=self)
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.button(label="Create Directory (Thread & Embed)", style=discord.ButtonStyle.green, disabled=True)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Call the logic to create thread/embed
+        # We need to call a function in OurClansCog, or import it.
+        # Ideally, we trigger the logic. 
+        # Since logic is in OurClansCog, we can get the cog and call a method.
+        
+        await interaction.response.defer()
+        
+        # Save Basic Info First
+        await mongo_manager.update_clan_field(self.clan['clan_tag'], "status", self.status)
+        await mongo_manager.update_clan_field(self.clan['clan_tag'], "category", self.category)
+        
+        # Call OurClansCog to create thread
+        cog = interaction.client.get_cog("OurClansCog")
+        if cog:
+            success, msg = await cog.create_clan_directory(self.clan['clan_tag'])
+            if success:
+                await interaction.followup.send(f"✅ **Success!** {msg}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ **Error:** {msg}", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ **Error:** `OurClansCog` is not loaded. Please contact admin.", ephemeral=True)
+
+class DirectoryEditView(discord.ui.View):
+    def __init__(self, clan):
+        super().__init__(timeout=None)
+        self.clan = clan
+
+    @discord.ui.select(placeholder="Edit Field", options=[
+        discord.SelectOption(label="Status", value="status"),
+        discord.SelectOption(label="Category", value="category"),
+        discord.SelectOption(label="Description", value="description"),
+        discord.SelectOption(label="Leaders Note", value="leaders_note")
+    ])
+    async def select_field(self, interaction: discord.Interaction, select: discord.ui.Select):
+        field = select.values[0]
+        
+        if field == "status":
+            # Sub-view for status
+            await interaction.response.send_message("Select New Status:", view=SimpleUpdateView(self.clan['clan_tag'], "status", ["family", "trial"]), ephemeral=True)
+        elif field == "category":
+             await interaction.response.send_message("Select New Category:", view=SimpleUpdateView(self.clan['clan_tag'], "category", ["Main", "Feeder", "Farming", "Trial"]), ephemeral=True)
+        else:
+            # Modal for text fields
+            label = "Clan Description" if field == "description" else "Leaders Note"
+            modal = SingleFieldModal(self.clan['clan_tag'], field, label, self.clan.get(field, ""))
+            await interaction.response.send_modal(modal)
+
+class SimpleUpdateView(discord.ui.View):
+    def __init__(self, clan_tag, field, options_list):
+        super().__init__(timeout=None)
+        options = []
+        for opt in options_list:
+            options.append(discord.SelectOption(label=opt.title(), value=opt))
+        
+        self.select = discord.ui.Select(placeholder=f"Select {field}", options=options)
+        self.select.callback = self.callback
+        self.add_item(self.select)
+        self.clan_tag = clan_tag
+        self.field = field
+
+    async def callback(self, interaction: discord.Interaction):
+        val = self.select.values[0]
+        await mongo_manager.update_clan_field(self.clan_tag, self.field, val)
+        await interaction.response.send_message(f"✅ Updated **{self.field}** to `{val}`.", ephemeral=True)
+        
+        # Trigger Embed Update if possible
+        cog = interaction.client.get_cog("OurClansCog")
+        if cog:
+            await cog.update_clan_embed(self.clan_tag)
     def __init__(self, clans):
         super().__init__(timeout=None)
         self.clans = clans
