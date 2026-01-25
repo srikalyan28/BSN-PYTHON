@@ -161,17 +161,25 @@ class OurClansCog(commands.Cog):
         # Capital
         ch_level = "N/A"
         ch_trophies = "0"
-        ch_league = "" # No easy access to capital league in basic object usually, but let's check
-        if hasattr(details, 'capital_hall_level'):
-             ch_level = str(details.capital_hall_level)
-             ch_trophies = str(details.capital_points) # Wait, capital_points is usually total loot? No, clan_capital_points ? 
-             # coc.py uses 'clan_capital_points' for trophies usually
+        
+        # Safe access for Capital Hall
+        # coc.py 2.0+ uses capital_hall_level, but some versions might not?
+        # We'll use getattr to be safe
+        ch_lvl_val = getattr(details, "capital_hall_level", None)
+        if ch_lvl_val:
+             ch_level = str(ch_lvl_val)
+             # Try to get points
+             ch_trophies = str(getattr(details, "clan_capital_points", 0))
         elif hasattr(details, 'capital_districts'):
-             # Logic to find CH level
-             pass
+             # Logic to find CH level from districts if needed
+             districts = details.capital_districts
+             for d in districts:
+                 if d.name == "Capital Peak":
+                     ch_level = str(d.hall_level)
+                     break
         
         # For now, simplistic CH line
-        stats_lines.append(f"🛖 **CH {details.capital_hall_level}**   💎 **{details.capital_points}** Trophies")
+        stats_lines.append(f"🛖 **CH {ch_level}**   💎 **{ch_trophies}** Trophies")
         
         leader_name = "Unknown"
         # Find leader
@@ -246,10 +254,11 @@ class OurClansView(discord.ui.View):
         # Wait, requirement: "Query clans where status = family category = <button category> ... Trial Button show all clans where status = trial"
         
         matches = []
+        matches = []
         if category == "Trial":
-            matches = [c for c in clans if c.get('status', '').lower() == 'trial']
+            matches = [c for c in clans if (c.get('status') or '').lower() == 'trial']
         else:
-            matches = [c for c in clans if c.get('status', '').lower() == 'family' and c.get('category', '').lower() == category.lower()]
+            matches = [c for c in clans if (c.get('status') or '').lower() == 'family' and (c.get('category') or '').lower() == category.lower()]
             
         if not matches:
             await interaction.response.send_message(f"No clans found in **{category}** category.", ephemeral=True)
