@@ -153,7 +153,9 @@ class OurClansCog(commands.Cog):
         elif category == "trial": footer_file = "Orange_Footer.png"
         
         # Asset Path
-        file = discord.File(f"c:\\Users\\admin\\Desktop\\BSN PYTHON\\assets\\{footer_file}", filename=footer_file)
+        # Use relative path compatible with both Windows and Linux container
+        asset_path = os.path.join(os.getcwd(), "assets", footer_file)
+        file = discord.File(asset_path, filename=footer_file)
 
         embed = discord.Embed(description="", color=discord.Color.dark_theme())
         
@@ -297,7 +299,7 @@ class OurClansView(discord.ui.View):
             return
             
         # Send Dropdown View
-        view = CategorySelectView(matches, category, self)
+        view = CategorySelectView(matches, category, self, interaction.guild)
         await interaction.response.send_message(f"**{category} Clans**\nSelect a clan to view details:", view=view, ephemeral=True)
 
     @discord.ui.button(label="Main Clans", custom_id="dir_main", style=discord.ButtonStyle.primary, emoji="🛡️")
@@ -317,13 +319,12 @@ class OurClansView(discord.ui.View):
         await self.show_clans(interaction, "Trial")
 
 class CategorySelectView(discord.ui.View):
-    def __init__(self, clans, category, cog_view):
+    def __init__(self, clans, category, cog_view, guild):
         super().__init__(timeout=180) # Ephemeral views expire
         self.clans = clans
         self.category = category
-        self.cog_view = cog_view # to access build_clan_embed? No, it's method of Cog. 
-        # Actually I can't easily access Cog method from here unless I pass Cog instance or look it up.
-        # I'll rely on `interaction.client.get_cog("OurClansCog")`.
+        self.cog_view = cog_view 
+        self.guild = guild
         
         # Sort by CWL
         cwl_order = {
@@ -349,10 +350,10 @@ class CategorySelectView(discord.ui.View):
             sanitized_tag = c['clan_tag'].replace("#", "").lower()
             
             # Search guild emojis
-            if interaction.guild:
-                found_emoji = discord.utils.get(interaction.guild.emojis, name=sanitized_name)
+            if self.guild:
+                found_emoji = discord.utils.get(self.guild.emojis, name=sanitized_name)
                 if not found_emoji:
-                    found_emoji = discord.utils.get(interaction.guild.emojis, name=sanitized_tag)
+                    found_emoji = discord.utils.get(self.guild.emojis, name=sanitized_tag)
                 
                 if found_emoji:
                     emoji = found_emoji
