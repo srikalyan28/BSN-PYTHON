@@ -184,7 +184,7 @@ async def perform_clone(interaction, target_clan, template_cat, old_member, old_
                 elif isinstance(ch, discord.StageChannel):
                      new_ch = await new_cat.create_stage_channel(name=new_name, topic=ch.topic, overwrites=ch_overwrites)
                 elif isinstance(ch, discord.ForumChannel):
-                     new_ch = await new_cat.create_forum_channel(name=new_name, topic=ch.topic, overwrites=ch_overwrites)
+                     new_ch = await guild.create_forum_channel(name=new_name, topic=ch.topic, overwrites=ch_overwrites, category=new_cat)
                 
                 report.append(f"Cloned {ch.name} -> **{new_name}**")
                 await asyncio.sleep(0.5) # Safe rate limit
