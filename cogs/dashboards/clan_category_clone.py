@@ -141,6 +141,14 @@ async def perform_clone(interaction, target_clan, template_cat, old_member, old_
              await interaction.followup.send("❌ Target Clan Roles not found in server.", ephemeral=True)
              return
 
+        # Refetch Template Category from Guild to ensure we have .channels
+        real_template = guild.get_channel(template_cat.id)
+        if not real_template:
+            await interaction.followup.send("❌ Template Category not found in cache. Please try again.", ephemeral=True)
+            return
+            
+        print(f"Cloning from Template: {real_template.name} | Channels: {len(real_template.channels)}")
+
         # 1. Create Category
         new_cat_name = f"-----{target_clan['name']}-----"
         
@@ -149,10 +157,10 @@ async def perform_clone(interaction, target_clan, template_cat, old_member, old_
         # But we need to swap the overwrites immediately or applied after?
         # Safe way: Create with overwrites.
         
-        overwrites = template_cat.overwrites
+        overwrites = real_template.overwrites
         new_overwrites = process_overwrites(overwrites, old_member, old_leader, new_member_role, new_leader_role)
         
-        new_cat = await guild.create_category(name=new_cat_name, overwrites=new_overwrites, position=template_cat.position + 1)
+        new_cat = await guild.create_category(name=new_cat_name, overwrites=new_overwrites, position=real_template.position + 1)
         
         report = [f"Created Category: **{new_cat_name}**"]
         
@@ -161,7 +169,7 @@ async def perform_clone(interaction, target_clan, template_cat, old_member, old_
         template_abbrev = template_abbrev.lower()
         
         try:
-            for ch in template_cat.channels:
+            for ch in real_template.channels:
                 # Name Replacement
                 # "📝・tg-clan-info" -> "📝・icl-clan-info"
                 new_name = ch.name.lower().replace(template_abbrev, new_abbrev)
