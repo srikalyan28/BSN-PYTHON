@@ -265,6 +265,8 @@ class SimpleUpdateView(discord.ui.View):
         cog = interaction.client.get_cog("OurClansCog")
         if cog:
             await cog.update_clan_embed(self.clan_tag)
+
+class ClanVisibilityView(discord.ui.View):
     def __init__(self, clans):
         super().__init__(timeout=None)
         self.clans = clans
