@@ -360,6 +360,12 @@ async def collect_clan_details(interaction, clan_type, min_th):
         tag = msg.content.upper()
         await msg.delete()
 
+        # 3. Abbreviation (New)
+        await interaction.followup.send("Enter **Clan Abbreviation** (e.g. ICL, DB):", ephemeral=True)
+        msg = await interaction.client.wait_for('message', check=check, timeout=60)
+        abbreviation = msg.content.upper()
+        await msg.delete()
+
         # 3. Link
         await interaction.followup.send("Paste the **Clan Link** (from Clash of Clans):", ephemeral=True)
         msg = await interaction.client.wait_for('message', check=check, timeout=60)
@@ -401,17 +407,43 @@ async def collect_clan_details(interaction, clan_type, min_th):
                 return
         await msg.delete()
 
-        # 6. Role
-        await interaction.followup.send("Mention the **Leadership Role** (e.g., @Role):", ephemeral=True)
-        msg = await interaction.client.wait_for('message', check=check, timeout=60)
-        role_id = msg.role_mentions[0].id if msg.role_mentions else None
-        if not role_id:
-             if msg.content.isdigit():
-                role_id = msg.content
-             else:
-                await interaction.followup.send("Invalid role mention. Aborting.", ephemeral=True)
-                return
-        await msg.delete()
+        # 6. Roles Logic
+        view = RoleSetupView()
+        # Create a message to hold the view so we can edit it if needed, or just follow up
+        view_msg = await interaction.followup.send("Do you want to **Auto-Create Discord Roles** (Member & Leadership) for this clan?", view=view, ephemeral=True)
+        await view.wait()
+        
+        leadership_role_id = None
+        clan_role_id = None
+        
+        if view.choice == "auto":
+            try:
+                guild = interaction.guild
+                # Create Roles
+                # Member Role: <NAME>
+                m_role = await guild.create_role(name=name, mentionable=True)
+                # Leader Role: <NAME> Leadership
+                l_role = await guild.create_role(name=f"{name} Leadership", mentionable=True)
+                
+                clan_role_id = str(m_role.id)
+                leadership_role_id = str(l_role.id)
+                await interaction.followup.send(f"✅ Auto-Created Roles: {m_role.mention} and {l_role.mention}", ephemeral=True)
+            except Exception as e:
+                await interaction.followup.send(f"⚠️ Error creating roles: {e}. Roles set to None. Edit later.", ephemeral=True)
+                
+        else:
+            # Manual Entry
+            # Leadership Role
+            await interaction.followup.send("Mention the **Leadership Role** (e.g., @Role):", ephemeral=True)
+            msg = await interaction.client.wait_for('message', check=check, timeout=60)
+            leadership_role_id = msg.role_mentions[0].id if msg.role_mentions else (msg.content if msg.content.isdigit() else None)
+            await msg.delete()
+            
+            # Member Role
+            await interaction.followup.send("Mention the **Clan Member Role** (e.g., @Role):", ephemeral=True)
+            msg = await interaction.client.wait_for('message', check=check, timeout=60)
+            clan_role_id = msg.role_mentions[0].id if msg.role_mentions else (msg.content if msg.content.isdigit() else None)
+            await msg.delete()
 
         # Fetch additional details from CoC API
         clan_details = await coc_api.get_clan(tag)
@@ -436,22 +468,41 @@ async def collect_clan_details(interaction, clan_type, min_th):
         clan_data = {
             "name": name,
             "clan_tag": tag,
+            "clan_abbreviation": abbreviation,
             "type": clan_type,
             "min_th": int(min_th),
             "clan_link": link,
             "logo_url": logo,
             "leader_id": str(leader_id),
-            "leadership_role_id": str(role_id),
+            "leadership_role_id": str(leadership_role_id) if leadership_role_id else None,
+            "clan_role_id": str(clan_role_id) if clan_role_id else None,
             "war_league": war_league,
             "capital_hall": str(capital_hall),
             "badge_url": badge_url
         }
         
         await mongo_manager.save_clan(clan_data)
-        await interaction.followup.send(f"✅ **{name}** has been added successfully!", ephemeral=True)
+        await interaction.followup.send(f"✅ **{name}** ({abbreviation}) has been added successfully!", ephemeral=True)
 
     except asyncio.TimeoutError:
         await interaction.followup.send("Timed out. Please start over.", ephemeral=True)
+
+class RoleSetupView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.choice = None
+
+    @discord.ui.button(label="Yes, Auto-Create", style=discord.ButtonStyle.success)
+    async def auto(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.choice = "auto"
+        self.stop()
+        await interaction.response.defer()
+
+    @discord.ui.button(label="No, Manual Input", style=discord.ButtonStyle.secondary)
+    async def manual(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.choice = "manual"
+        self.stop()
+        await interaction.response.defer()
 
 
 class SelectClanView(discord.ui.View):
@@ -491,6 +542,8 @@ class ClanFieldSelectionView(discord.ui.View):
         discord.SelectOption(label="Min Town Hall", value="min_th"),
         discord.SelectOption(label="Leader ID", value="leader_id"),
         discord.SelectOption(label="Leadership Role ID", value="leadership_role_id"),
+        discord.SelectOption(label="Clan Role ID", value="clan_role_id"),
+        discord.SelectOption(label="Abbreviation", value="clan_abbreviation"),
         discord.SelectOption(label="Clan Link", value="clan_link"),
         discord.SelectOption(label="Logo URL", value="logo_url")
     ])
