@@ -183,14 +183,12 @@ class OurClansCog(commands.Cog):
         elif category == "farming": footer_file = "Green_Footer.png"
         elif category == "trial": footer_file = "Orange_Footer.png"
         
-        # Determine Color from Footer File Name
-        f_lower = footer_file.lower()
-        if "red" in f_lower: embed_color = discord.Color.red()
-        elif "blue" in f_lower: embed_color = discord.Color.blue()
-        elif "green" in f_lower: embed_color = discord.Color.green()
-        elif "orange" in f_lower: embed_color = discord.Color.orange()
-        elif "purple" in f_lower: embed_color = discord.Color.purple()
-        elif "gold" in f_lower or "yellow" in f_lower: embed_color = discord.Color.gold()
+        
+        # Determine Color based on Category (User Requested Hex)
+        if category == "main": embed_color = discord.Color(0x780000)
+        elif category == "feeder": embed_color = discord.Color(0x003aa4)
+        elif category == "farming": embed_color = discord.Color(0x01cb2a)
+        elif category == "trial": embed_color = discord.Color.orange()
         else: embed_color = discord.Color.dark_theme()
         
         # Asset Path
