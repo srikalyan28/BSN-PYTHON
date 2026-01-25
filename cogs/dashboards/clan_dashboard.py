@@ -145,11 +145,14 @@ class DirectoryClanSelectView(discord.ui.View):
             # Start Edit Flow
             await interaction.response.send_message(f"Editing Directory for **{clan['name']}**:", view=DirectoryEditView(clan), ephemeral=True)
 
-        elif self.action == "delete":
+        if self.action == "delete":
             # Delete Flow
-            # Remove thread_id, embed_message_id, status, category etc?
-            # User said "only me owner should be able to delete... remove directory fields"
-            # We don't necessarily delete the threads automatically unless requested, but let's clear DB fields.
+            # Call OurClansCog to delete thread
+            cog = interaction.client.get_cog("OurClansCog")
+            if cog:
+                 await cog.delete_clan_directory(clan_tag)
+            
+            # Clear DB fields
             await mongo_manager.update_clan_field(clan_tag, "thread_id", None)
             await mongo_manager.update_clan_field(clan_tag, "embed_message_id", None)
             await mongo_manager.update_clan_field(clan_tag, "status", None)
@@ -157,7 +160,7 @@ class DirectoryClanSelectView(discord.ui.View):
             await mongo_manager.update_clan_field(clan_tag, "description", None)
             await mongo_manager.update_clan_field(clan_tag, "leaders_note", None)
             
-            await interaction.response.send_message(f"🗑️ Directory data for **{clan['name']}** has been cleared.", ephemeral=True)
+            await interaction.response.send_message(f"🗑️ Directory and Thread for **{clan['name']}** have been removed.", ephemeral=True)
 
 class DirectorySetupView(discord.ui.View):
     def __init__(self, clan):

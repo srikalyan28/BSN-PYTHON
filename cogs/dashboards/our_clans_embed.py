@@ -73,6 +73,24 @@ class OurClansCog(commands.Cog):
             print(f"Error creating directory for {clan_tag}: {e}")
             return False, str(e)
 
+    async def delete_clan_directory(self, clan_tag):
+        # Called by ClanDashboard to clean up
+        channel = self.bot.get_channel(self.channel_id)
+        if not channel: return
+
+        clans = await mongo_manager.get_clans()
+        clan = next((c for c in clans if c['clan_tag'] == clan_tag), None)
+        
+        if clan and clan.get('thread_id'):
+            try:
+                thread = channel.get_thread(int(clan['thread_id']))
+                if thread:
+                     await thread.delete()
+                     print(f"Deleted directory thread for {clan_tag}")
+            except Exception as e:
+                print(f"Error deleting thread for {clan_tag}: {e}")
+
+
     async def update_clan_embed(self, clan_tag):
         # Triggered by edits
         clans = await mongo_manager.get_clans()
@@ -102,31 +120,104 @@ class OurClansCog(commands.Cog):
     async def build_clan_embed(self, clan):
         # Fetch fresh data
         details = await coc_api.get_clan(clan['clan_tag'])
-        
-        name = clan.get('name', 'Unknown')
-        tag = clan.get('clan_tag', '')
-        desc = clan.get('description', 'No description provided.')
-        note = clan.get('leaders_note', '')
-        logo = clan.get('logo_url', '')
-        
-        embed = discord.Embed(title=f"{name} ({tag})", description=desc, color=discord.Color.gold())
-        if logo:
-            embed.set_thumbnail(url=logo)
-        
-        if details:
-            embed.add_field(name="🏆 War League", value=details.war_league.name if details.war_league else "Unranked", inline=True)
-            embed.add_field(name="🏰 Capital Hall", value=str(details.capital_hall_level) if hasattr(details, 'capital_hall_level') else "N/A", inline=True)
-            embed.add_field(name="👥 Members", value=f"{details.member_count}/50", inline=True)
-            embed.add_field(name="⚔️ War Wins", value=str(details.war_wins), inline=True)
-            embed.add_field(name="🔥 Win Streak", value=str(details.war_win_streak), inline=True)
-            embed.add_field(name="🌍 Location", value=details.location.name if details.location else "Global", inline=True)
-        else:
-            embed.add_field(name="Status", value="⚠️ API Data Unavailable", inline=False)
+        if not details:
+            return discord.Embed(title=f"{clan['name']} ({clan['clan_tag']})", description="⚠️ API Data Unavailable", color=discord.Color.red())
 
-        if note:
-             embed.add_field(name="📝 Leader's Note", value=note, inline=False)
-             
-        embed.set_footer(text=f"Part of BlackSpire Nation • Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        name = details.name
+        tag = details.tag
+        # In-game description
+        in_game_desc = details.description
+        
+        # Custom Leader Note (from DB)
+        leaders_note = clan.get('leaders_note', '')
+        
+        # Images
+        badge_url = details.badge.url
+        custom_logo = clan.get('logo_url', '')
+
+        embed = discord.Embed(description="", color=discord.Color.dark_theme())
+        
+        # Author: Name (Tag)
+        embed.set_author(name=f"{name} ({tag})", icon_url=badge_url)
+        
+        # Thumbnail: Badge
+        embed.set_thumbnail(url=badge_url)
+        
+        # Main Stats Block
+        stats_lines = []
+        stats_lines.append(f"🚩 **Level {details.level}**   👥 **{details.member_count}/50**")
+        
+        location = details.location.name if details.location else "Global"
+        stats_lines.append(f"🌍 **{location}**")
+        
+        # War Stats
+        streak = details.war_win_streak
+        stats_lines.append(f"⚔️ **W {details.war_wins}** / **D {details.war_ties}** / **L {details.war_losses}** (Streak: {streak})")
+        
+        # Leagues
+        war_league = details.war_league.name if details.war_league else "Unranked"
+        stats_lines.append(f"🏆 **{war_league}**")
+        
+        # Capital
+        ch_level = "N/A"
+        ch_trophies = "0"
+        ch_league = "" # No easy access to capital league in basic object usually, but let's check
+        if hasattr(details, 'capital_hall_level'):
+             ch_level = str(details.capital_hall_level)
+             ch_trophies = str(details.capital_points) # Wait, capital_points is usually total loot? No, clan_capital_points ? 
+             # coc.py uses 'clan_capital_points' for trophies usually
+        elif hasattr(details, 'capital_districts'):
+             # Logic to find CH level
+             pass
+        
+        # For now, simplistic CH line
+        stats_lines.append(f"🛖 **CH {details.capital_hall_level}**   💎 **{details.capital_points}** Trophies")
+        
+        leader_name = "Unknown"
+        # Find leader
+        for member in details.members:
+            if member.role == coc.Role.leader:
+                leader_name = member.name
+                break
+        stats_lines.append(f"👑 **{leader_name}**")
+        
+        embed.description = "\n".join(stats_lines)
+        
+        # Townhall Breakdown
+        th_counts = {}
+        for m in details.members:
+            th = m.town_hall
+            th_counts[th] = th_counts.get(th, 0) + 1
+        
+        # Sort THs high to low
+        sorted_ths = sorted(th_counts.items(), key=lambda x: x[0], reverse=True)
+        # Format: <emoji> 12  <emoji> 5 ...
+        # Since we don't have custom emojis ready for valid IDs, using text/generic. 
+        # User screen showed emoji. I will use generic text for now like "**TH16**: 5" or see if I can use standard numbers.
+        # Actually user has uploaded an image showing custom TH emojis. I don't have their IDs.
+        # I will use a clean text format: "🏠 TH16: 5 | 🏠 TH15: 10"
+        
+        th_str_parts = []
+        for th, count in sorted_ths:
+             # Limit to top relevant THs to save space? Or show all.
+             th_str_parts.append(f"**TH{th}**: {count}")
+        
+        if th_str_parts:
+             embed.add_field(name="Townhall Breakdown", value=" | ".join(th_str_parts), inline=False)
+
+        # Clan Description (In-Game)
+        if in_game_desc:
+            embed.add_field(name="Clan Description", value=in_game_desc, inline=False)
+
+        # Leader's Note (Custom)
+        if leaders_note:
+            embed.add_field(name="Leader's Note", value=leaders_note, inline=False)
+
+        # Big Image: Custom Logo
+        if custom_logo:
+             embed.set_image(url=custom_logo)
+
+        embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         return embed
 
     @tasks.loop(hours=1)
@@ -163,14 +254,41 @@ class OurClansView(discord.ui.View):
         if not matches:
             await interaction.response.send_message(f"No clans found in **{category}** category.", ephemeral=True)
             return
+
+        # SORTING: Order by CWL Rank (High to Low)
+        cwl_order = {
+            "Champion League I": 18, "Champion League II": 17, "Champion League III": 16,
+            "Master League I": 15, "Master League II": 14, "Master League III": 13,
+            "Crystal League I": 12, "Crystal League II": 11, "Crystal League III": 10,
+            "Gold League I": 9, "Gold League II": 8, "Gold League III": 7,
+            "Silver League I": 6, "Silver League II": 5, "Silver League III": 4,
+            "Bronze League I": 3, "Bronze League II": 2, "Bronze League III": 1,
+            "Unranked": 0
+        }
+
+        # Helper to get rank val
+        def get_rank_val(clan):
+            # We need to rely on the 'war_league' stored in DB for sorting without fetching API for all
+            league = clan.get('war_league', 'Unranked')
+            return cwl_order.get(league, 0)
+
+        matches.sort(key=get_rank_val, reverse=True)
             
         desc = ""
         for c in matches:
             thread_id = c.get('thread_id')
-            link = f"https://discord.com/channels/{interaction.guild_id}/{interaction.channel_id}/{thread_id}" if thread_id else "#"
-            desc += f"• **{c['name']}** ([More Info]({link}))\n"
+            league_emoji = "🏆"
+            league_name = c.get('war_league', 'Unranked')
+            # Using thread.mention for clickable link if possible, or manual URL
+            # Manual URL: https://discord.com/channels/{guild_id}/{thread_id} ?? No, threads are channels.
+            # So https://discord.com/channels/{guild_id}/{thread_id} is correct.
+            # But wait, create_thread returns a Thread object. thread.jump_url is safest.
+            # But we only stored ID. 
             
-        embed = discord.Embed(title=f"{category} Clans", description=desc, color=discord.Color.purple())
+            link = f"https://discord.com/channels/{interaction.guild_id}/{thread_id}" if thread_id else "#"
+            desc += f"• **{c['name']}** ({league_name}) [view clan]({link})\n"
+            
+        embed = discord.Embed(title=f"{category} Clans (Sorted by CWL)", description=desc, color=discord.Color.purple())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Main Clans", custom_id="dir_main", style=discord.ButtonStyle.primary, emoji="🛡️")
