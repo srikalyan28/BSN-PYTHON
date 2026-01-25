@@ -58,11 +58,11 @@ class OurClansCog(commands.Cog):
             thread = await channel.create_thread(name=f"{clan['name']} ({clan['clan_tag']})", type=discord.ChannelType.public_thread)
             
             # Fetch stats for embed
-            embed, file = await self.build_clan_embed(clan)
+            embeds, file = await self.build_clan_embed(clan)
             
             # Send and Pin
-            if embed and file:
-                msg = await thread.send(embed=embed, file=file)
+            if embeds and file:
+                msg = await thread.send(embeds=embeds, file=file)
                 await msg.pin()
             else:
                 return False, "Failed to build embed/file."
@@ -116,11 +116,11 @@ class OurClansCog(commands.Cog):
                 
             msg = await thread.fetch_message(int(clan['embed_message_id']))
             if msg:
-                embed, file = await self.build_clan_embed(clan)
-                if embed and file:
+                embeds, file = await self.build_clan_embed(clan)
+                if embeds and file:
                     # To update attachments, we must pass the new file and clear the old ones?
                     # edit(attachments=[...]) replaces them.
-                    await msg.edit(embed=embed, attachments=[file])
+                    await msg.edit(embeds=embeds, attachments=[file])
         except Exception as e:
             print(f"Failed to update embed for {clan_tag}: {e}")
 
@@ -143,10 +143,6 @@ class OurClansCog(commands.Cog):
         category = clan.get('category', 'Trial').lower()
         footer_file = "Gray_Footer.png"
         
-        if "main" in category: footer_file = "Red_Footer.png"
-        elif "feeder" in category: footer_file = "Blue_Footer (1).png" # Or Purple? User said Blue/Purple. Let's guess Blue for now or check assets. 
-        # Assets: Blue_Footer (1).png, Purple_Footer.png. Usually Feeder is Blue or Purple.
-        # Let's map strict:
         if category == "main": footer_file = "Red_Footer.png"
         elif category == "feeder": footer_file = "Blue_Footer (1).png"
         elif category == "farming": footer_file = "Green_Footer.png"
@@ -157,28 +153,13 @@ class OurClansCog(commands.Cog):
         asset_path = os.path.join(os.getcwd(), "assets", footer_file)
         file = discord.File(asset_path, filename=footer_file)
 
+        # --- Main Embed (Content + Logo) ---
         embed = discord.Embed(description="", color=discord.Color.dark_theme())
         
         # Author: Name (Tag)
         embed.set_author(name=f"{name} ({tag})", icon_url=badge_url)
         
-        # Thumbnail: Custom Logo (Prioritized) or Badge
-        if custom_logo:
-             embed.set_thumbnail(url=custom_logo)
-        else:
-             embed.set_thumbnail(url=badge_url)
-             
-        # Set Main Image to the Footer Banner
-        embed.set_image(url=f"attachment://{footer_file}")
-        
-        # Main Stats Block
-
-        embed = discord.Embed(description="", color=discord.Color.dark_theme())
-        
-        # Author: Name (Tag)
-        embed.set_author(name=f"{name} ({tag})", icon_url=badge_url)
-        
-        # Thumbnail: Badge
+        # Thumbnail: Badge (Always Badge per user req "same like this exactly with clan badge as showing here")
         embed.set_thumbnail(url=badge_url)
         
         # Main Stats Block
@@ -201,8 +182,6 @@ class OurClansCog(commands.Cog):
         ch_trophies = "0"
         
         # Safe access for Capital Hall
-        # coc.py 2.0+ uses capital_hall_level, but some versions might not?
-        # We'll use getattr to be safe
         ch_lvl_val = getattr(details, "capital_hall_level", None)
         if ch_lvl_val:
              ch_level = str(ch_lvl_val)
@@ -216,7 +195,6 @@ class OurClansCog(commands.Cog):
                      ch_level = str(d.hall_level)
                      break
         
-        # For now, simplistic CH line
         stats_lines.append(f"🛖 **CH {ch_level}**   💎 **{ch_trophies}** Trophies")
         
         leader_name = "Unknown"
@@ -235,17 +213,9 @@ class OurClansCog(commands.Cog):
             th = m.town_hall
             th_counts[th] = th_counts.get(th, 0) + 1
         
-        # Sort THs high to low
         sorted_ths = sorted(th_counts.items(), key=lambda x: x[0], reverse=True)
-        # Format: <emoji> 12  <emoji> 5 ...
-        # Since we don't have custom emojis ready for valid IDs, using text/generic. 
-        # User screen showed emoji. I will use generic text for now like "**TH16**: 5" or see if I can use standard numbers.
-        # Actually user has uploaded an image showing custom TH emojis. I don't have their IDs.
-        # I will use a clean text format: "🏠 TH16: 5 | 🏠 TH15: 10"
-        
         th_str_parts = []
         for th, count in sorted_ths:
-             # Limit to top relevant THs to save space? Or show all.
              th_str_parts.append(f"**TH{th}**: {count}")
         
         if th_str_parts:
@@ -259,12 +229,16 @@ class OurClansCog(commands.Cog):
         if leaders_note:
             embed.add_field(name="Leader's Note", value=leaders_note, inline=False)
 
-        if custom_logo and not embed.thumbnail:
-             # Fallback if I didn't set it above
-             embed.set_thumbnail(url=custom_logo)
+        # Big Image: Custom Logo (Dragon Shield etc)
+        if custom_logo:
+             embed.set_image(url=custom_logo)
 
-        embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        return embed, file # Return tuple
+        # --- Footer Embed (Banner) ---
+        footer_embed = discord.Embed(color=discord.Color.dark_theme())
+        footer_embed.set_image(url=f"attachment://{footer_file}")
+        footer_embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+        return [embed, footer_embed], file
 
     @tasks.loop(hours=1)
     async def update_clans_task(self):
@@ -380,20 +354,27 @@ class CategorySelectView(discord.ui.View):
         
         await interaction.response.defer(ephemeral=True)
         
-        embed, file = await cog.build_clan_embed(clan)
-        if not embed:
+        embeds, file = await cog.build_clan_embed(clan)
+        if not embeds:
              await interaction.followup.send("Failed to load clan details.", ephemeral=True)
              return
              
         # Add Jump Button
         view = discord.ui.View()
-        if clan.get('thread_id'):
-            # Correct URL for a Thread/Channel is channels/GUILD_ID/THREAD_ID
-            url = f"https://discord.com/channels/{interaction.guild_id}/{clan['thread_id']}"
-            view.add_item(discord.ui.Button(label="Visit Clan Thread", url=url, style=discord.ButtonStyle.link))
+        # Add Join Button
+        view = discord.ui.View()
+        
+        # Priority: Stored 'clan_link' -> Generated CoC Link
+        join_url = clan.get('clan_link')
+        if not join_url:
+             # Fallback to standard deep link
+             clean_tag = clan['clan_tag'].replace("#", "")
+             join_url = f"https://link.clashofclans.com/en?action=OpenClanProfile&tag={clean_tag}"
+             
+        view.add_item(discord.ui.Button(label="Visit Clan", url=join_url, style=discord.ButtonStyle.link))
         
         # Send
-        await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
+        await interaction.followup.send(embeds=embeds, file=file, view=view, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(OurClansCog(bot))
