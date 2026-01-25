@@ -240,7 +240,6 @@ class DirectoryEditView(discord.ui.View):
         elif field == "category":
              await interaction.response.send_message("Select New Category:", view=SimpleUpdateView(self.clan['clan_tag'], "category", ["Main", "Feeder", "Farming", "Trial"]), ephemeral=True)
         else:
-        else:
             # Modal for text fields
             label = "Leaders Note"
             modal = SingleFieldModal(self.clan['clan_tag'], field, label, self.clan.get(field, ""))
