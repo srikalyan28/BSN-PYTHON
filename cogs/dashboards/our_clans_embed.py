@@ -43,6 +43,22 @@ class OurClansCog(commands.Cog):
         await channel.send(embed=embed, view=OurClansView())
         await interaction.response.send_message("Directory Panel Created!", ephemeral=True)
 
+    @app_commands.command(name="debug_emojis", description="List emojis in Asset Guild")
+    async def debug_emojis(self, interaction: discord.Interaction):
+        guild = self.bot.get_guild(1360555270048055366)
+        if not guild:
+            await interaction.response.send_message("❌ Asset Guild NOT FOUND in cache.", ephemeral=True)
+            return
+            
+        emojis = sorted([e.name for e in guild.emojis])
+        msg = f"**Found {len(emojis)} emojis in Asset Guild:**\n" + ", ".join(emojis)
+        
+        # Split if too long
+        if len(msg) > 2000:
+            msg = msg[:1900] + "... (truncated)"
+            
+        await interaction.response.send_message(msg, ephemeral=True)
+
     async def create_clan_directory(self, clan_tag):
         channel = self.bot.get_channel(self.channel_id)
         if not channel:
@@ -162,15 +178,31 @@ class OurClansCog(commands.Cog):
         # Helper to get emoji
         # Helper to get emoji
         def get_emoji_str(name):
-             # Try Asset Server First
+             # 1. Try Asset Server (Exact)
              asset_guild = self.bot.get_guild(1360555270048055366)
              if asset_guild:
                  emoji = discord.utils.get(asset_guild.emojis, name=name)
                  if emoji: return str(emoji)
-             
-             # Fallback to Global Cache
+             else:
+                 print(f"DEBUG: Asset Guild 1360555270048055366 NOT FOUND in cache.")
+
+             # 2. Try Global (Exact)
              emoji = discord.utils.get(self.bot.emojis, name=name)
-             return str(emoji) if emoji else ""
+             if emoji: return str(emoji)
+             
+             # 3. Try Asset Server (Case Insensitive)
+             if asset_guild:
+                 for e in asset_guild.emojis:
+                     if e.name.lower() == name.lower():
+                         return str(e)
+
+             # 4. Try Global (Case Insensitive) - Last Resort
+             for e in self.bot.emojis:
+                 if e.name.lower() == name.lower():
+                     return str(e)
+
+             print(f"DEBUG: Emoji '{name}' not found anywhere (Exact or Case-Insensitive).")
+             return ""
 
         def map_league_name(name):
             # Maps API "Crystal League I" -> User's "Crystal1"
@@ -449,6 +481,9 @@ class CategorySelectView(discord.ui.View):
                          found_emoji = discord.utils.get(asset_guild.emojis, name=league_emoji_name)
                      if not found_emoji:
                          found_emoji = discord.utils.get(self.bot.emojis, name=league_emoji_name)
+                     
+                     if not found_emoji:
+                         print(f"DEBUG: League Emoji '{league_emoji_name}' NOT FOUND (AssetGuild Found: {asset_guild is not None})")
                 if not found_emoji:
                     found_emoji = discord.utils.get(self.bot.emojis, name=sanitized_tag)
                 
