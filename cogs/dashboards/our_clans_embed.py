@@ -162,6 +162,13 @@ class OurClansCog(commands.Cog):
         # Helper to get emoji
         # Helper to get emoji
         def get_emoji_str(name):
+             # Try Asset Server First
+             asset_guild = self.bot.get_guild(1360555270048055366)
+             if asset_guild:
+                 emoji = discord.utils.get(asset_guild.emojis, name=name)
+                 if emoji: return str(emoji)
+             
+             # Fallback to Global Cache
              emoji = discord.utils.get(self.bot.emojis, name=name)
              return str(emoji) if emoji else ""
 
@@ -187,17 +194,16 @@ class OurClansCog(commands.Cog):
 
         def get_th_emoji(th_level):
              # User Rules:
-             # TH 1-6 -> :th6_1:
-             # TH 7 -> :th7:
-             # TH 8 -> :th8:
-             # TH 9+ -> :th{level}:
+             # TH 1-5 -> :th5_1:
+             # TH 6 -> :th6:
+             # TH 7+ -> :th{level}:
              
              lvl = int(th_level)
-             if lvl <= 6:
-                 e = get_emoji_str("th6_1")
+             if lvl <= 5:
+                 e = get_emoji_str("th5_1")
                  return e if e else "🏠"
              
-             # Try th{level} e.g. th17, th18, th9, th8, th7
+             # Try th{level} e.g. th17, th18, th9, th8, th7, th6
              e = get_emoji_str(f"th{lvl}")
              if e: return e
              
@@ -406,17 +412,43 @@ class CategorySelectView(discord.ui.View):
             
             # Use Mapping Logic locally for dropdown
             raw_league = c.get('war_league', 'Unranked')
-            # Reuse map logic (simplified here or copy/paste? better to not duplicate complex logic but short lookup is fine)
+            
+            # Reuse map logic manually since we can't easily call inner method
             s = raw_league.replace(" League", "").strip()
-            roman_map = {"I": "1", "II": "2", "III": "3"}
-            parts = s.split(" ")
             league_emoji_name = s.replace(" ", "")
-            if len(parts) == 2 and parts[1] in roman_map:
-                league_emoji_name = f"{parts[0]}{roman_map[parts[1]]}"
+
+            # Gold Special Case
+            if "Gold" in raw_league:
+                 if " I" in raw_league and "II" not in raw_league: league_emoji_name = "Gold1"
+                 elif raw_league.endswith(" I"): league_emoji_name = "Gold1"
+                 else: league_emoji_name = "Gold2"
+            else:
+                 # Standard Roman Map
+                 roman_map = {"I": "1", "II": "2", "III": "3"}
+                 parts = s.split(" ")
+                 if len(parts) == 2 and parts[1] in roman_map:
+                     league_emoji_name = f"{parts[0]}{roman_map[parts[1]]}"
             
             if self.bot:
-                # Priority 1: Clan Name/Tag Emoji
-                found_emoji = discord.utils.get(self.bot.emojis, name=sanitized_name)
+                asset_guild = self.bot.get_guild(1360555270048055366)
+                
+                # Priority 1: Clan Name/Tag Emoji (Asset Server -> Global)
+                found_emoji = None
+                if asset_guild:
+                    found_emoji = discord.utils.get(asset_guild.emojis, name=sanitized_name)
+                    if not found_emoji: found_emoji = discord.utils.get(asset_guild.emojis, name=sanitized_tag)
+                
+                if not found_emoji:
+                    found_emoji = discord.utils.get(self.bot.emojis, name=sanitized_name)
+                if not found_emoji:
+                    found_emoji = discord.utils.get(self.bot.emojis, name=sanitized_tag)
+                
+                # Priority 2: League Emoji (Asset Server -> Global)
+                if not found_emoji:
+                     if asset_guild:
+                         found_emoji = discord.utils.get(asset_guild.emojis, name=league_emoji_name)
+                     if not found_emoji:
+                         found_emoji = discord.utils.get(self.bot.emojis, name=league_emoji_name)
                 if not found_emoji:
                     found_emoji = discord.utils.get(self.bot.emojis, name=sanitized_tag)
                 
