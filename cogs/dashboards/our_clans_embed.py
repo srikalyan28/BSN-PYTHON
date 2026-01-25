@@ -342,12 +342,24 @@ class CategorySelectView(discord.ui.View):
         
         options = []
         for c in self.clans:
-            # Emoji based on TH? or generic. 
-            # Description: "Tactical - #TAG"
+            # Emoji Logic: Try to find a custom emoji matching Clan Name or Tag
+            # Sanitize name: "Indo Clan Lords" -> "indoclanlords"
+            emoji = "🛡️" # Default
+            sanitized_name = c['name'].replace(" ", "").lower()
+            sanitized_tag = c['clan_tag'].replace("#", "").lower()
             
-            # Try to get better desc
-            desc = f"{c.get('war_league', 'Unranked')} - #{c['clan_tag']}"
-            options.append(discord.SelectOption(label=c['name'], value=c['clan_tag'], description=desc, emoji="🛡️"))
+            # Search guild emojis
+            if interaction.guild:
+                found_emoji = discord.utils.get(interaction.guild.emojis, name=sanitized_name)
+                if not found_emoji:
+                    found_emoji = discord.utils.get(interaction.guild.emojis, name=sanitized_tag)
+                
+                if found_emoji:
+                    emoji = found_emoji
+
+            # Description (League only, no Tag)
+            desc = f"{c.get('war_league', 'Unranked')}"
+            options.append(discord.SelectOption(label=c['name'], value=c['clan_tag'], description=desc, emoji=emoji))
             
         self.select_clan.options = options[:25]
 
@@ -375,7 +387,8 @@ class CategorySelectView(discord.ui.View):
         # Add Jump Button
         view = discord.ui.View()
         if clan.get('thread_id'):
-            url = f"https://discord.com/channels/{interaction.guild_id}/{interaction.channel_id}/{clan['thread_id']}"
+            # Correct URL for a Thread/Channel is channels/GUILD_ID/THREAD_ID
+            url = f"https://discord.com/channels/{interaction.guild_id}/{clan['thread_id']}"
             view.add_item(discord.ui.Button(label="Visit Clan Thread", url=url, style=discord.ButtonStyle.link))
         
         # Send
