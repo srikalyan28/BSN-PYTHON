@@ -221,24 +221,34 @@ class OurClansCog(commands.Cog):
         if th_str_parts:
              embed.add_field(name="Townhall Breakdown", value=" | ".join(th_str_parts), inline=False)
 
-        # Clan Description (In-Game)
-        if in_game_desc:
-            embed.add_field(name="Clan Description", value=in_game_desc, inline=False)
-
-        # Leader's Note (Custom)
-        if leaders_note:
-            embed.add_field(name="Leader's Note", value=leaders_note, inline=False)
-
-        # Big Image: Custom Logo (Dragon Shield etc)
+        if th_str_parts:
+             embed.add_field(name="Townhall Breakdown", value=" | ".join(th_str_parts), inline=False)
+             
+        # Big Image: Custom Logo (Dragon Shield etc) - Main Embed
         if custom_logo:
              embed.set_image(url=custom_logo)
+        
+        # Add Main Embed to list
+        embed_list = [embed]
 
-        # --- Footer Embed (Banner) ---
-        footer_embed = discord.Embed(color=discord.Color.dark_theme())
+        # --- "About Clan" Embed ---
+        if in_game_desc:
+            desc_embed = discord.Embed(title="About Clan", description=in_game_desc, color=discord.Color.dark_theme())
+            embed_list.append(desc_embed)
+
+        # --- "Leader's Note" Embed ---
+        if leaders_note:
+            note_embed = discord.Embed(title="Leader's Note", description=leaders_note, color=discord.Color.dark_theme())
+            embed_list.append(note_embed)
+
+        # --- Footer Embed (Banner + Apply Link) ---
+        footer_embed = discord.Embed(description="**Apply to join:** <#1440648795972046848>", color=discord.Color.dark_theme())
         footer_embed.set_image(url=f"attachment://{footer_file}")
         footer_embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        
+        embed_list.append(footer_embed)
 
-        return [embed, footer_embed], file
+        return embed_list, file
 
     @tasks.loop(hours=1)
     async def update_clans_task(self):
