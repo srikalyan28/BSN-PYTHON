@@ -138,6 +138,19 @@ class OurClansCog(commands.Cog):
         # Images
         badge_url = details.badge.url
         custom_logo = clan.get('logo_url', '')
+
+        # Helper to get emoji
+        def get_emoji_str(name):
+             emoji = discord.utils.get(self.bot.emojis, name=name)
+             return str(emoji) if emoji else ""
+
+        def get_th_emoji(th_level):
+             # Try th{level} e.g. th17, th18
+             e = get_emoji_str(f"th{th_level}")
+             if e: return e
+             # Fallback for lower THs or missing emojis
+             if int(th_level) <= 9: return "🏠" 
+             return f"**TH{th_level}**"
         
         # Determine Footer Asset based on Category
         category = clan.get('category', 'Trial').lower()
@@ -169,8 +182,11 @@ class OurClansCog(commands.Cog):
         # Author: Name (Tag)
         embed.set_author(name=f"{name} ({tag})", icon_url=badge_url)
         
-        # Thumbnail: Badge (Always Badge per user req "same like this exactly with clan badge as showing here")
-        embed.set_thumbnail(url=badge_url)
+        # Thumbnail: Custom Logo replaces Badge if present, else Badge
+        # User requested footer image at bottom. Only way is set_image via footer. 
+        # So Custom Logo moves to Thumbnail to stay visible.
+        thumb_url = custom_logo if custom_logo else badge_url
+        embed.set_thumbnail(url=thumb_url)
         
         # Main Stats Block
         stats_lines = []
@@ -184,8 +200,12 @@ class OurClansCog(commands.Cog):
         stats_lines.append(f"⚔️ **W {details.war_wins}** / **D {details.war_ties}** / **L {details.war_losses}** (Streak: {streak})")
         
         # Leagues
-        war_league = details.war_league.name if details.war_league else "Unranked"
-        stats_lines.append(f"🏆 **{war_league}**")
+        war_league_name = details.war_league.name if details.war_league else "Unranked"
+        # Try to match emoji: "Master League II" -> "Master_League_II"
+        league_emoji_name = war_league_name.replace(" ", "_")
+        league_emoji = get_emoji_str(league_emoji_name)
+        
+        stats_lines.append(f"🏆 {league_emoji} **{war_league_name}**")
         
         # Capital
         ch_level = "N/A"
@@ -225,8 +245,10 @@ class OurClansCog(commands.Cog):
         
         sorted_ths = sorted(th_counts.items(), key=lambda x: x[0], reverse=True)
         th_str_parts = []
+        th_str_parts = []
         for th, count in sorted_ths:
-             th_str_parts.append(f"**TH{th}**: {count}")
+             emoji = get_th_emoji(th)
+             th_str_parts.append(f"{emoji} {count}")
         
         if th_str_parts:
              embed.add_field(name="Townhall Breakdown", value=" | ".join(th_str_parts), inline=False)
@@ -240,16 +262,11 @@ class OurClansCog(commands.Cog):
         if leaders_note:
             embed.add_field(name="Leader's Note", value=leaders_note, inline=False)
 
-        # Big Image: Custom Logo (Dragon Shield etc) - Main Embed
-        if custom_logo:
-             embed.set_image(url=custom_logo)
-         
-        # --- Footer Embed (Banner + Apply Link) ---
-        footer_embed = discord.Embed(color=embed_color)
-        footer_embed.set_image(url=f"attachment://{footer_file}")
-        footer_embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        # Footer Image as Main Image
+        embed.set_image(url=f"attachment://{footer_file}")
+        embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         
-        return [embed, footer_embed], file
+        return [embed], file
 
     @tasks.loop(hours=1)
     async def update_clans_task(self):
