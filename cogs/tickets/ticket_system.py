@@ -640,6 +640,9 @@ def map_league_name(name):
     
     return league_emoji_name
 
+
+
+
 async def finalize_collection_standalone(interaction, session_data):
     # This is a hack to bridge the gap between Modal (no cog instance) and Cog methods.
     # Ideally we pass cog instance to View/Modal.
