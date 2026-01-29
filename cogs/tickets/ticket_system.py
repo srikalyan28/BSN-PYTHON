@@ -597,6 +597,49 @@ class PlayerTagModal(discord.ui.Modal, title="Enter Player Tag"):
         else:
             await interaction.response.send_message("Invalid Tag or API Error. Please try again.", ephemeral=True)
 
+# --- Emoji Helpers ---
+def get_emoji_str(bot, name):
+    # 1. Try Asset Server (Exact)
+    asset_guild = bot.get_guild(1360555270048055366)
+    if asset_guild:
+        emoji = discord.utils.get(asset_guild.emojis, name=name)
+        if emoji: return str(emoji)
+    
+    # 2. Try Global (Exact)
+    emoji = discord.utils.get(bot.emojis, name=name)
+    if emoji: return str(emoji)
+    
+    # 3. Try Asset Server (Case Insensitive)
+    if asset_guild:
+        for e in asset_guild.emojis:
+            if e.name.lower() == name.lower():
+                return str(e)
+
+    # 4. Try Global (Case Insensitive)
+    for e in bot.emojis:
+        if e.name.lower() == name.lower():
+            return str(e)
+
+    return ""
+
+def map_league_name(name):
+    s = name.replace(" League", "").strip()
+    league_emoji_name = s.replace(" ", "")
+
+    # Gold Special Case
+    if "Gold" in name:
+            if " I" in name and "II" not in name: league_emoji_name = "Gold1"
+            elif name.endswith(" I"): league_emoji_name = "Gold1"
+            else: league_emoji_name = "Gold2"
+    else:
+        # Standard Roman Map
+        roman_map = {"I": "1", "II": "2", "III": "3"}
+        parts = s.split(" ")
+        if len(parts) == 2 and parts[1] in roman_map:
+            league_emoji_name = f"{parts[0]}{roman_map[parts[1]]}"
+    
+    return league_emoji_name
+
 async def finalize_collection_standalone(interaction, session_data):
     # This is a hack to bridge the gap between Modal (no cog instance) and Cog methods.
     # Ideally we pass cog instance to View/Modal.
@@ -687,11 +730,7 @@ class ClanSelectionView(discord.ui.View):
                 emoji="🛡️"
             ))
             for c in regular_clans:
-                 options.append(discord.SelectOption(
-                    label=c['name'], 
-                    value=c['clan_tag'], 
-                    description=f"Min TH: {c['min_th']} | CWL: {c.get('war_league', 'N/A')} | CH: {c.get('capital_hall', 'N/A')}"
-                ))
+                 options.append(self.create_clan_option(c))
         
         # Feeder Clans Block
         if feeder_clans:
@@ -702,11 +741,7 @@ class ClanSelectionView(discord.ui.View):
                 emoji="🎓"
             ))
             for c in feeder_clans:
-                 options.append(discord.SelectOption(
-                    label=c['name'], 
-                    value=c['clan_tag'], 
-                    description=f"Min TH: {c['min_th']} | CWL: {c.get('war_league', 'N/A')} | CH: {c.get('capital_hall', 'N/A')}"
-                ))
+                 options.append(self.create_clan_option(c))
 
         # Truncate if too many (Discord max 25)
         # We prioritize showing clans over headers if tight, but unlikely for now
@@ -717,6 +752,39 @@ class ClanSelectionView(discord.ui.View):
              options.append(discord.SelectOption(label="No suitable clans found", value="none"))
         
         self.select_clan.options = options
+
+    def create_clan_option(self, c):
+        # Determine Emoji
+        emoji = "🛡️" 
+        sanitized_name = c['name'].replace(" ", "").lower()
+        sanitized_tag = c['clan_tag'].replace("#", "").lower()
+        
+        # Priority 1: Custom Emoji (Name or Tag)
+        e_str = get_emoji_str(self.cog_instance.bot, sanitized_name)
+        if not e_str: 
+            e_str = get_emoji_str(self.cog_instance.bot, sanitized_tag)
+        
+        # Priority 2: League Emoji
+        if not e_str:
+            raw_league = c.get('war_league', 'Unranked')
+            league_emoji_name = map_league_name(raw_league)
+            e_str = get_emoji_str(self.cog_instance.bot, league_emoji_name)
+        
+        if e_str:
+             emoji = discord.PartialEmoji.from_str(e_str)
+
+        # Description
+        league_text = f"{c.get('war_league', 'Unranked')}"
+        min_th = c.get('min_th', 1)
+        ch_level = c.get('capital_hall', '0')
+        desc = f'{league_text} | TH{min_th}+ | CH {ch_level}'
+        
+        return discord.SelectOption(
+            label=c['name'], 
+            value=c['clan_tag'], 
+            description=desc,
+            emoji=emoji
+        )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if self.session_data.get("user_id") and interaction.user.id != self.session_data["user_id"]:
