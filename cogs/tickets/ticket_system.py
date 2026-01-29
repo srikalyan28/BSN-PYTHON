@@ -560,7 +560,7 @@ class PlayerTagModal(discord.ui.Modal, title="Enter Player Tag"):
                 criteria_embed.add_field(name="Your TH", value=str(th), inline=True)
                 criteria_embed.add_field(name="Required TH", value=str(min_th_global), inline=True)
                 
-                await interaction.response.send_message(embed=criteria_embed, ephemeral=True)
+                await interaction.response.send_message(embed=criteria_embed, ephemeral=False)
                 
                 # Add as rejected
                 account_data = {
