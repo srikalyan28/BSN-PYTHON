@@ -140,7 +140,13 @@ class TicketSystemCog(commands.Cog):
         clans = await mongo_manager.get_clans()
         
         # Filter by eligibility (Visible + Min TH)
-        valid_clans = [c for c in clans if int(c.get('min_th', 99)) <= int(acc['th']) and c.get('visible', True)]
+        # Ensure we handle potential string 'false' from legacy data
+        def is_clan_visible(c):
+            v = c.get('visible', True)
+            if isinstance(v, str) and v.lower() == 'false': return False
+            return bool(v)
+
+        valid_clans = [c for c in clans if int(c.get('min_th', 99)) <= int(acc['th']) and is_clan_visible(c)]
         
         # SELF-HEALING STATS LOGIC
         updates_made = False
