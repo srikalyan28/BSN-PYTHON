@@ -274,7 +274,8 @@ class ClanVisibilityView(discord.ui.View):
         # Create options
         options = []
         for clan in clans:
-            is_visible = clan.get('visible', True)
+            # Default to FALSE (Hidden) if missing, to match Ticket System logic
+            is_visible = clan.get('visible', False)
             options.append(discord.SelectOption(
                 label=clan['name'],
                 value=clan['clan_tag'],

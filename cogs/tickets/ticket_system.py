@@ -158,8 +158,9 @@ class TicketSystemCog(commands.Cog):
 
         # Filter by eligibility (Visible + Min TH)
         # Ensure we handle potential string 'false' from legacy data
+        # DEFAULT TO FALSE: If 'visible' is missing, assume HIDDEN.
         def is_clan_visible(c):
-            v = c.get('visible', True)
+            v = c.get('visible', False) 
             if isinstance(v, str) and v.lower() == 'false': return False
             return bool(v)
 
