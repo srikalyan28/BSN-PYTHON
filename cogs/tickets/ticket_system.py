@@ -139,6 +139,23 @@ class TicketSystemCog(commands.Cog):
         # Fetch All Clans
         clans = await mongo_manager.get_clans()
         
+        # --- DEBUG: CHECK FOR DUPLICATES & VISIBILITY ---
+        print("\n[DEBUG] --- SCANNING CLANS FOR TICKET SYSTEM ---")
+        seen_tags = {}
+        for c in clans:
+            tag = c.get('clan_tag')
+            vis = c.get('visible', 'MISSING')
+            is_vis_type = type(c.get('visible'))
+            print(f"[DEBUG] Clan: {c.get('name')} | Tag: {tag} | Visible: {vis} ({is_vis_type}) | ID: {c.get('_id')}")
+            
+            if tag in seen_tags:
+                print(f"🚨 [WARNING] DUPLICATE CLAN TAG FOUND: {tag}")
+                print(f"    Existing: {seen_tags[tag]['name']} (Vis: {seen_tags[tag].get('visible')}) | ID: {seen_tags[tag].get('_id')}")
+                print(f"    Current:  {c.get('name')} (Vis: {c.get('visible')}) | ID: {c.get('_id')}")
+            seen_tags[tag] = c
+        print("[DEBUG] --- END SCAN ---\n")
+        # -----------------------------------------------
+
         # Filter by eligibility (Visible + Min TH)
         # Ensure we handle potential string 'false' from legacy data
         def is_clan_visible(c):
