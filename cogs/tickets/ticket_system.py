@@ -533,50 +533,60 @@ class PlayerTagModal(discord.ui.Modal, title="Enter Player Tag"):
             name = player.name
             th = player.town_hall
             
-            # CHECK GLOBAL MIN TH
+            # --- IMMEDIATE ELIGIBILITY CHECK ---
             clans = await mongo_manager.get_clans()
+            min_th_global = 99 
             if clans:
-                # Filter visible clans only? User said "lowest town hall accepting clan".
-                # Probably should check all active/visible clans.
-                min_th_global = min([int(c.get('min_th', 99)) for c in clans if c.get('visible', True)], default=0)
+                # 1. Determine Global Min TH (from VISIBLE clans only)
+                # Using the fixed visibility logic (default False)
+                def is_visible(c):
+                     v = c.get('visible', False)
+                     if isinstance(v, str) and v.lower() == 'false': return False
+                     return bool(v)
                 
-                if th < min_th_global:
-                     # IMMEDIATE REJECTION
-                    criteria_embed = discord.Embed(
-                        title="Criteria Mismatch",
-                        description=f"Hello **{name}**,\n\nUnfortunately, your Town Hall level (**TH{th}**) does not meet the minimum requirement of **TH{min_th_global}** established for our clan family.",
-                        color=discord.Color.red()
-                    )
-                    criteria_embed.add_field(name="Account", value=f"{name} ({tag})", inline=True)
-                    criteria_embed.add_field(name="Your TH", value=str(th), inline=True)
-                    criteria_embed.add_field(name="Required TH", value=str(min_th_global), inline=True)
-                    
-                    await interaction.response.send_message(embed=criteria_embed)
-                    
-                    # Add as rejected so we don't break the loop count
-                    account_data = {
-                        "tag": "rejected",
-                        "name": name,
-                        "th": th,
-                        "stats": player,
-                        "selected_clan_tag": "rejected" 
-                    }
-                    self.session_data["accounts"].append(account_data)
-                    
-                    # Next account
-                    next_index = self.index + 1
-                    if next_index < self.session_data["account_count"]:
-                         embed = discord.Embed(title=f"Account #{next_index + 1} Details", description="Please enter the Player Tag for this account.", color=discord.Color.blue())
-                         await interaction.channel.send(embed=embed, view=PlayerTagView(self.session_data, next_index))
-                    else:
-                         await finalize_collection_standalone(interaction, self.session_data)
-                    return
+                visible_clans = [c for c in clans if is_visible(c)]
+                if visible_clans:
+                    min_th_global = min([int(c.get('min_th', 99)) for c in visible_clans], default=99)
+            
+            # Check Eligibility
+            if th < min_th_global:
+                 # CRITERIA MISMATCH
+                criteria_embed = discord.Embed(
+                    title="Criteria Mismatch",
+                    description=f"Hello **{name}**,\n\nUnfortunately, your Town Hall level (**TH{th}**) does not meet the minimum requirement of **TH{min_th_global}** established for our clan family.",
+                    color=discord.Color.red()
+                )
+                criteria_embed.add_field(name="Account", value=f"{name} ({tag})", inline=True)
+                criteria_embed.add_field(name="Your TH", value=str(th), inline=True)
+                criteria_embed.add_field(name="Required TH", value=str(min_th_global), inline=True)
+                
+                await interaction.response.send_message(embed=criteria_embed, ephemeral=True)
+                
+                # Add as rejected
+                account_data = {
+                    "tag": tag,
+                    "name": name,
+                    "th": th,
+                    "stats": player,
+                    "selected_clan_tag": "rejected" 
+                }
+                self.session_data["accounts"].append(account_data)
+                
+                # Next account or Finalize
+                next_index = self.index + 1
+                if next_index < self.session_data["account_count"]:
+                     embed = discord.Embed(title=f"Account #{next_index + 1} Details", description="Please enter the Player Tag for this account.", color=discord.Color.blue())
+                     await interaction.channel.send(embed=embed, view=PlayerTagView(self.session_data, next_index))
+                else:
+                     await finalize_collection_standalone(interaction, self.session_data)
+                return
 
+            # --- ELIGIBLE: PROCEED ---
             account_data = {
                 "tag": f"#{player.tag.strip('#')}",
                 "name": name,
                 "th": th,
-                "stats": player # Store full player object (or dict representation if needed)
+                "stats": player
             }
             
             # Account Found Embed
@@ -668,6 +678,14 @@ def map_league_name(name):
 
 
 async def finalize_collection_standalone(interaction, session_data):
+    # Check if ALL accounts are rejected/skipped
+    if all(acc.get("selected_clan_tag") == "rejected" for acc in session_data["accounts"]):
+        # All accounts failed criteria -> Final Rejection
+        # We send the generic rejection embed as per user request
+        rejection_embed = create_rejection_embed("Blackspire Nation", session_data["user_id"])
+        await interaction.channel.send(embed=rejection_embed)
+        return
+
     # This is a hack to bridge the gap between Modal (no cog instance) and Cog methods.
     # Ideally we pass cog instance to View/Modal.
     # For now, we just instantiate a dummy view to call the method if we can, or just copy logic.
@@ -710,12 +728,10 @@ async def finalize_collection_standalone(interaction, session_data):
         if 'screenshot_url' in acc:
             await thread.send(f"**Base Screenshot for {acc['name']}**:\n{acc['screenshot_url']}")
             
-    # Check if ALL accounts are rejected
-    if all(acc.get("selected_clan_tag") == "rejected" for acc in session_data["accounts"]):
-        # All accounts failed criteria -> Final Rejection
-        rejection_embed = create_rejection_embed("Blackspire Nation", session_data["user_id"])
-        await interaction.channel.send(embed=rejection_embed)
-        return
+            
+    # Check if ALL accounts are rejected (Moved to top of function)
+    # if all(acc.get("selected_clan_tag") == "rejected" for acc in session_data["accounts"]):
+    #    ...
 
     # Proceed to Questions Embed
     proceed_embed = discord.Embed(
