@@ -3,8 +3,7 @@ import datetime
 
 class CWLModels:
     """
-    Handles all database interactions for the CWL Management System.
-    Uses new collections: cwl_seasons, cwl_managers, cwl_representatives, cwl_forums, cwl_assignments.
+    Handles all database interactions for the Advanced CWL Management System.
     """
     
     # --- SEASONS ---
@@ -16,9 +15,7 @@ class CWLModels:
     @staticmethod
     async def set_active_season(season_name):
         db = await mongo_manager.get_collection("cwl_seasons")
-        # Archive current active season
         await db.update_many({"status": "active"}, {"$set": {"status": "archived"}})
-        # Set new season
         await db.update_one(
             {"season": season_name},
             {"$set": {"status": "active", "created_at": datetime.datetime.utcnow()}},
@@ -72,15 +69,29 @@ class CWLModels:
         doc = await db.find_one({"season": season, "clan_tag": clan_tag})
         return doc["user_ids"] if doc else []
 
+    # --- WIZARD STATE ---
     @staticmethod
-    async def get_all_reps(season):
-        db = await mongo_manager.get_collection("cwl_representatives")
-        cursor = db.find({"season": season})
-        return [doc async for doc in cursor]
+    async def save_state(channel_id, state_data):
+        db = await mongo_manager.get_collection("cwl_state")
+        await db.update_one(
+            {"channel_id": channel_id},
+            {"$set": state_data},
+            upsert=True
+        )
 
-    # --- FORUMS ---
     @staticmethod
-    async def save_forum(season, clan_tag, data):
+    async def get_state(channel_id):
+        db = await mongo_manager.get_collection("cwl_state")
+        return await db.find_one({"channel_id": channel_id})
+
+    @staticmethod
+    async def delete_state(channel_id):
+        db = await mongo_manager.get_collection("cwl_state")
+        await db.delete_one({"channel_id": channel_id})
+
+    # --- FORUM DATA (Metadata) ---
+    @staticmethod
+    async def save_forum_metadata(season, clan_tag, data):
         db = await mongo_manager.get_collection("cwl_forums")
         update_data = {
             "season": season,
@@ -95,34 +106,102 @@ class CWLModels:
         )
 
     @staticmethod
-    async def get_forum(season, clan_tag):
+    async def get_forum_metadata(season, clan_tag):
         db = await mongo_manager.get_collection("cwl_forums")
         return await db.find_one({"season": season, "clan_tag": clan_tag})
 
-    # --- ASSIGNMENTS ---
+    # --- OVERFLOWS (Players Available) ---
     @staticmethod
-    async def add_assignment(season, player_tag, source_clan, dest_clan, th_level, player_name):
-        db = await mongo_manager.get_collection("cwl_assignments")
+    async def add_overflow(season, source_clan_tag, player_tag, name, th):
+        db = await mongo_manager.get_collection("cwl_overflows")
         await db.update_one(
             {"season": season, "player_tag": player_tag},
             {"$set": {
-                "source_clan": source_clan,
-                "dest_clan": dest_clan,
-                "town_hall": th_level,
-                "player_name": player_name,
+                "source_clan": source_clan_tag,
+                "player_name": name,
+                "player_th": th,
+                "status": "available", # or 'allotted'
+                "allotted_to_tag": None,
+                "allotted_to_name": None,
                 "updated_at": datetime.datetime.utcnow()
             }},
             upsert=True
         )
 
     @staticmethod
-    async def get_assignments(season, dest_clan=None):
-        db = await mongo_manager.get_collection("cwl_assignments")
+    async def get_overflows(season, source_clan=None, min_th=None, status=None):
+        db = await mongo_manager.get_collection("cwl_overflows")
         query = {"season": season}
-        if dest_clan:
-            query["dest_clan"] = dest_clan
+        if source_clan: query["source_clan"] = source_clan
+        if status: query["status"] = status
+        if min_th: query["player_th"] = {"$gte": min_th}
         
         cursor = db.find(query)
+        return [doc async for doc in cursor]
+
+    @staticmethod
+    async def update_overflow_status(season, player_tag, status, allotted_to_tag=None, allotted_to_name=None):
+        db = await mongo_manager.get_collection("cwl_overflows")
+        update = {"status": status}
+        if allotted_to_tag is not None: update["allotted_to_tag"] = allotted_to_tag
+        if allotted_to_name is not None: update["allotted_to_name"] = allotted_to_name
+        
+        await db.update_one(
+            {"season": season, "player_tag": player_tag},
+            {"$set": update}
+        )
+        
+    @staticmethod
+    async def clear_clan_overflows(season, clan_tag):
+        # Used when resetting forum wizard 
+        db = await mongo_manager.get_collection("cwl_overflows")
+        await db.delete_many({"season": season, "source_clan": clan_tag})
+
+    # --- REQUIREMENTS (Help Needed) ---
+    @staticmethod
+    async def set_requirement(season, clan_tag, th, count):
+        db = await mongo_manager.get_collection("cwl_requirements")
+        await db.update_one(
+            {"season": season, "clan_tag": clan_tag, "th_level": th},
+            {"$set": {"count_needed": count, "count_allotted": 0}}, # Reset allotted on new req? Maybe.
+            upsert=True
+        )
+
+    @staticmethod
+    async def get_requirements(season, clan_tag=None):
+        db = await mongo_manager.get_collection("cwl_requirements")
+        query = {"season": season}
+        if clan_tag: query["clan_tag"] = clan_tag
+        cursor = db.find(query)
+        return [doc async for doc in cursor]
+        
+    @staticmethod
+    async def increment_allotted_count(season, clan_tag, th, amount=1):
+        db = await mongo_manager.get_collection("cwl_requirements")
+        await db.update_one(
+            {"season": season, "clan_tag": clan_tag, "th_level": th},
+            {"$inc": {"count_allotted": amount}}
+        )
+
+    @staticmethod
+    async def clear_clan_requirements(season, clan_tag):
+        db = await mongo_manager.get_collection("cwl_requirements")
+        await db.delete_many({"season": season, "clan_tag": clan_tag})
+
+    # --- SHELL CLANS ---
+    @staticmethod
+    async def add_shell_clan(name, tag):
+        db = await mongo_manager.get_collection("cwl_shell_clans")
+        await db.update_one(
+            {"tag": tag},
+            {"$set": {"name": name}},
+            upsert=True
+        )
+
+    @staticmethod
+    async def get_shell_clans():
+        db = await mongo_manager.get_collection("cwl_shell_clans")
+        cursor = db.find({})
         return [doc async for doc in cursor]
 
 cwl_models = CWLModels()

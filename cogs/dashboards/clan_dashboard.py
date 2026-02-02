@@ -442,11 +442,15 @@ async def collect_clan_details(interaction, clan_type, min_th):
             leadership_role_id = msg.role_mentions[0].id if msg.role_mentions else (msg.content if msg.content.isdigit() else None)
             await msg.delete()
             
-            # Member Role
-            await interaction.followup.send("Mention the **Clan Member Role** (e.g., @Role):", ephemeral=True)
             msg = await interaction.client.wait_for('message', check=check, timeout=60)
             clan_role_id = msg.role_mentions[0].id if msg.role_mentions else (msg.content if msg.content.isdigit() else None)
             await msg.delete()
+
+        # 7. Leadership Channel (New)
+        await interaction.followup.send("Mention the **Leadership Chat Channel** (e.g. #leaders-chat):", ephemeral=True)
+        msg = await interaction.client.wait_for('message', check=check, timeout=60)
+        leadership_channel_id = msg.channel_mentions[0].id if msg.channel_mentions else (msg.content if msg.content.isdigit() else None)
+        await msg.delete()
 
         # Fetch additional details from CoC API
         clan_details = await coc_api.get_clan(tag)
@@ -478,6 +482,7 @@ async def collect_clan_details(interaction, clan_type, min_th):
             "logo_url": logo,
             "leader_id": str(leader_id),
             "leadership_role_id": str(leadership_role_id) if leadership_role_id else None,
+            "leadership_channel_id": str(leadership_channel_id) if leadership_channel_id else None,
             "clan_role_id": str(clan_role_id) if clan_role_id else None,
             "war_league": war_league,
             "capital_hall": str(capital_hall),
@@ -545,6 +550,7 @@ class ClanFieldSelectionView(discord.ui.View):
         discord.SelectOption(label="Min Town Hall", value="min_th"),
         discord.SelectOption(label="Leader ID", value="leader_id"),
         discord.SelectOption(label="Leadership Role ID", value="leadership_role_id"),
+        discord.SelectOption(label="Leadership Channel ID", value="leadership_channel_id"),
         discord.SelectOption(label="Clan Role ID", value="clan_role_id"),
         discord.SelectOption(label="Abbreviation", value="clan_abbreviation"),
         discord.SelectOption(label="Clan Link", value="clan_link"),
