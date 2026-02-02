@@ -254,6 +254,31 @@ class CWLModels:
             {"$set": {"status": "approved"}}
         )
 
+    @staticmethod
+    async def reset_season_data(season):
+        # Clears all operational data for a season, essentially resetting it.
+        # Keeps managers and shell clans (global).
+        
+        # 1. Clear Overflows
+        db_ov = await mongo_manager.get_collection("cwl_overflows")
+        await db_ov.delete_many({"season": season})
+        
+        # 2. Clear Requirements (The needs posted by clans)
+        db_req = await mongo_manager.get_collection("cwl_requirements")
+        await db_req.delete_many({"season": season})
+        
+        # 3. Clear Allocations/Allotments
+        db_alloc = await mongo_manager.get_collection("cwl_pending_allocations")
+        await db_alloc.delete_many({"season": season})
+        
+        # 4. Clear Forum Metadata (Status embeds etc)
+        db_forum = await mongo_manager.get_collection("cwl_forums")
+        await db_forum.delete_many({"season": season})
+        
+        # 5. Clear Representatives (Season specific roles/users)
+        db_reps = await mongo_manager.get_collection("cwl_representatives")
+        await db_reps.delete_many({"season": season})
+
 cwl_models = CWLModels()
 
 async def setup(bot):

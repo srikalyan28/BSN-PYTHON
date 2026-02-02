@@ -60,12 +60,46 @@ class CWLManagementCog(commands.Cog):
         await i.response.send_message("✅ Removed Manager", ephemeral=True)
 
 
-    @discord.ui.button(label="⚠️ Reset Season", style=discord.ButtonStyle.danger, row=0)
-    async def season(self, i, b):
+
+class AdminPanelView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    
+    @discord.ui.button(label="Season Setup", style=discord.ButtonStyle.primary, row=0)
+    async def season(self, i, b): 
         if not cwl_permissions.is_owner(i):
             await i.response.send_message("❌ Owner Only.", ephemeral=True)
             return
         await i.response.send_modal(SeasonModal())
+
+    @discord.ui.button(label="⚠️ Reset Data", style=discord.ButtonStyle.danger, row=0)
+    async def reset_btn(self, i, b):
+        if not cwl_permissions.is_owner(i):
+            await i.response.send_message("❌ Owner Only.", ephemeral=True)
+            return
+        
+        season = await cwl_models.get_active_season()
+        if not season:
+            await i.response.send_message("No active season.", ephemeral=True)
+            return
+            
+        # Confirmation
+        view = ConfirmResetView(season['season'])
+        await i.response.send_message(f"⚠️ **DANGER**: This will DELETE all stats/allocations/overflows for **{season['season']}**.\nAre you sure?", view=view, ephemeral=True)
+
+class ConfirmResetView(discord.ui.View):
+    def __init__(self, season):
+        super().__init__()
+        self.season = season
+        
+    @discord.ui.button(label="CONFIRM RESET", style=discord.ButtonStyle.danger)
+    async def confirm(self, i, b):
+        await cwl_models.reset_season_data(self.season)
+        await i.response.edit_message(content=f"✅ Data cleared for **{self.season}**.", view=None)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, i, b):
+        await i.response.edit_message(content="Cancelled.", view=None)
+
 
     @discord.ui.button(label="Allocations / Allotments", style=discord.ButtonStyle.success, row=1)
     async def allotments(self, i, b):
