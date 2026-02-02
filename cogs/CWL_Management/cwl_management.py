@@ -15,10 +15,10 @@ class CWLManagementCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    cwl = app_commands.Group(name="cwl", description="CWL Management")
+    cwl = app_commands.Group(name="cwl-admin", description="CWL Management")
     manager_group = app_commands.Group(name="manager", description="Manage CWL Managers", parent=cwl)
 
-    @cwl.command(name="management", description="Open CWL Management Panel (Managers Only)")
+    @cwl.command(name="panel", description="Open CWL Management Panel (Managers Only)")
     async def management_panel(self, interaction: discord.Interaction):
         if not await cwl_permissions.is_manager(interaction):
             await interaction.response.send_message("❌ Access Denied: CWL Manager/Owner only.", ephemeral=True)
