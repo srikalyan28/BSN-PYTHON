@@ -110,6 +110,12 @@ class CWLModels:
         db = await mongo_manager.get_collection("cwl_forums")
         return await db.find_one({"season": season, "clan_tag": clan_tag})
 
+    @staticmethod
+    async def get_forum_by_channel(season, channel_id):
+        db = await mongo_manager.get_collection("cwl_forums")
+        # Ensure channel_id is stored as int or match how it was saved
+        return await db.find_one({"season": season, "channel_id": channel_id})
+
     # --- OVERFLOWS (Players Available) ---
     @staticmethod
     async def add_overflow(season, source_clan_tag, player_tag, name, th):

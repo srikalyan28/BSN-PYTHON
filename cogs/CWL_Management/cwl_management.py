@@ -28,7 +28,7 @@ class CWLManagementCog(commands.Cog):
         season = await cwl_models.get_active_season()
         embed = discord.Embed(title="CWL Admin Panel", description=f"Season: **{season['season'] if season else 'None'}**", color=discord.Color.red())
         view = AdminPanelView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
 
     # --- SHELL CLANS COMMANDS ---
     @shell_group.command(name="add", description="Add a Shell Clan")
@@ -93,45 +93,36 @@ class AdminPanelView(discord.ui.View):
         season = await cwl_models.get_active_season()
         if not season: return
         
-        # We need to find all clans that received players
-        # Query Overflows where status='allotted'
-        # Group by dest (allotted_to_tag)
-        allotted = await cwl_models.get_overflows(season['season'], status='allotted')
-        dest_tags = list(set([a.get('allotted_to_tag') for a in allotted if a.get('allotted_to_tag')]))
-        
-        if not dest_tags:
-             await interaction.response.send_message("No allotments to release.", ephemeral=True)
+        # New Logic: Notify Source Clans about PENDING Allocations (slots assigned, not filled)
+        # Query pending allocations
+        pendings = await cwl_models.get_pending_allocations(season['season'])
+        source_tags = list(set([p['source_clan'] for p in pendings if p['status'] == 'pending']))
+
+        if not source_tags:
+             await interaction.response.send_message("No pending slot allocations to notify.", ephemeral=True)
              return
              
         await interaction.response.defer(ephemeral=True)
         count = 0
+        clans = await mongo_manager.get_clans() + await cwl_models.get_shell_clans() # Shells usually don't have channels
         
-        clans = await mongo_manager.get_clans()
-        
-        for tag in dest_tags:
-            clan = next((c for c in clans if c['clan_tag'] == tag), None)
+        for tag in source_tags:
+            clan = next((c for c in clans if c.get('clan_tag') == tag or c.get('tag') == tag), None)
             if not clan: continue
             
-            # Find Leadership Channel
-            channel_id = clan.get('leadership_channel_id')
-            if not channel_id:
-                # Try finding channel by name/forum? No, must use configured channel.
-                # Fallback to general channel logic or skip? User said "ask... so bot can send messages in right clan leaders chat".
-                continue
-                
+            channel_id = clan.get('leadership_channel_id') or (await cwl_models.get_forum_metadata(season['season'], tag) or {}).get('channel_id')
+            
+            if not channel_id: continue
             channel = interaction.guild.get_channel(int(channel_id))
             if not channel: continue
             
-            # Ping Leadership Role
             role_id = clan.get('leadership_role_id')
             role_ping = f"<@&{role_id}>" if role_id else "@here"
             
-            # Send Message
             try:
-                await channel.send(f"📢 {role_ping} **CWL Allotments Released!**\nPlease check your roster adjustments.")
+                await channel.send(f"📢 {role_ping} **CWL Action Required**\nYou have been assigned slots to fill. Run `/cwl allotment` in your forum channel.")
                 count += 1
-            except:
-                pass
+            except: pass
         
         await interaction.followup.send(f"✅ Notifications sent to {count} clans.", ephemeral=True)
 
@@ -199,57 +190,67 @@ class FillTHButton(discord.ui.Button):
         self.clan_tag = clan_tag
 
     async def callback(self, interaction: discord.Interaction):
-        # 1. Query Overflows (Available, TH >= self.th)
+        # 1. Query Overflows (Grouped by Source)
         overflows = await cwl_models.get_overflows(self.season, status="available", min_th=self.th)
         
         if not overflows:
             await interaction.response.send_message(f"No available overflows found for TH{self.th}+.", ephemeral=True)
             return
 
-        # Create Select Menu of Players
-        # Format: "Name (TH{th}) - SourceClan"
+        # Group by Source Clan
+        sources = {}
+        for p in overflows:
+            src = p.get('source_clan', 'Unknown')
+            sources[src] = sources.get(src, 0) + 1
+        
+        # Select Source Clan
         options = []
-        for p in overflows[:25]: # Limit 25
+        all_clans = await mongo_manager.get_clans() + await cwl_models.get_shell_clans()
+        
+        for src, count in sources.items():
+            if src == self.clan_tag: continue # Can't fill self
+            c = next((x for x in all_clans if x.get('clan_tag') == src or x.get('tag') == src), None)
+            name = c['name'] if c else src
             options.append(discord.SelectOption(
-                label=f"{p['player_name']} (TH{p['player_th']})",
-                value=p['player_tag'],
-                description=f"From: {p.get('source_clan', 'Unknown')}"
+                label=f"{name} ({count} available)",
+                value=src,
+                description=f"Can provide TH{self.th}"
             ))
-        
-        view = PlayerSelectView(self.season, self.clan_tag, self.th, options)
-        await interaction.response.send_message(f"Select players to allot to **{self.clan_tag}** (Slot: TH{self.th}):", view=view, ephemeral=True)
 
-class PlayerSelectView(discord.ui.View):
-    def __init__(self, season, target_clan, slot_th, options):
+        view = SourceSelectView(self.season, self.clan_tag, self.th, options)
+        await interaction.response.send_message(f"Select Source Clan to fill **TH{self.th}** for **{self.clan_tag}**:", view=view, ephemeral=True)
+
+class SourceSelectView(discord.ui.View):
+    def __init__(self, season, target_clan, th, options):
         super().__init__()
-        self.add_item(PlayerAllotSelect(season, target_clan, slot_th, options))
+        self.add_item(SourceSelect(season, target_clan, th, options))
 
-class PlayerAllotSelect(discord.ui.Select):
-    def __init__(self, season, target_clan, slot_th, options):
-        super().__init__(placeholder="Select Players to Allot...", min_values=1, max_values=len(options), options=options)
-        self.season = season
-        self.target_clan = target_clan
-        self.slot_th = slot_th
+class SourceSelect(discord.ui.Select):
+    def __init__(self, season, target_clan, th, options):
+        super().__init__(placeholder="Select Source Clan...", options=options)
+        self.season = season; self.target = target_clan; self.th = th
+    
+    async def callback(self, i):
+        src = self.values[0]
+        # Modal for Count
+        await i.response.send_modal(SlotCountModal(self.season, src, self.target, self.th))
 
-    async def callback(self, interaction: discord.Interaction):
-        # Allot selected players
-        selected_tags = self.values
-        count = len(selected_tags)
-        
-        # Lookups needed? We need names for confirmation, but we can trust values
-        for tag in selected_tags:
-            # Update Overflow Status
-            await cwl_models.update_overflow_status(self.season, tag, "allotted", self.target_clan)
+class SlotCountModal(discord.ui.Modal, title="Assign Slot Count"):
+    count = discord.ui.TextInput(label="Number of players to move", placeholder="e.g. 2")
+    def __init__(self, season, src, target, th):
+        super().__init__()
+        self.season = season; self.src = src; self.target = target; self.th = th
+
+    async def on_submit(self, i):
+        try:
+            qty = int(self.count.value)
+            # Create Pending Allocation
+            await cwl_models.add_pending_allocation(self.season, self.src, self.target, self.th, qty)
+            # Also update Requirement count (count allocated) for target clan immediate? 
+            # Or wait for filled?
+            # User wants admin to see "Filled" slots. We should increment "allotted" in requirements so Admin knows they did their job.
+            await cwl_models.increment_allotted_count(self.season, self.target, self.th, amount=qty)
             
-            # Add to proper assignments table?
-            # cwl_models has 'add_assignment'. We should likely use that too for easy query?
-            # Or just query Overflows. 'get_assignments' in older model queried that table.
-            # Let's keep data in `cwl_overflows` as master logic, but maybe update `cwl_assignments` for legacy viewing?
-            # User prompt implied "he can select... and save the allotment".
-            # Upgrading: we are filling a `slot_th` requirement.
-            pass
-        
-        # Update Requirements Count
-        await cwl_models.increment_allotted_count(self.season, self.target_clan, self.slot_th, amount=count)
-
-        await interaction.response.send_message(f"✅ Allotted {count} players to {self.target_clan}.", ephemeral=True)
+            await i.response.send_message(f"✅ Assigned **{qty}x TH{self.th}** slots from {self.src} -> {self.target}.\nSource clan leaders will be notified to fill these slots.", ephemeral=True)
+        except ValueError:
+            await i.response.send_message("Invalid number.", ephemeral=True)

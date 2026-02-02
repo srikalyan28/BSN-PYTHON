@@ -73,60 +73,43 @@ class CWLPostingCog(commands.Cog):
         else:
             await interaction.response.send_message(output)
 
-    @post_group.command(name="clan-cwl", description="Post Clan Specific CWL Details")
-    async def post_clan_cwl(self, interaction: discord.Interaction):
-        # ... (Permissions Logic same as old, verify Rep/Leader) ...
-        # Assume valid for now for brevity, copy strict checks from before
+    @post_group.command(name="allotment-report", description="Post Clan Allotment (Rich Report)")
+    async def post_allotment(self, interaction: discord.Interaction):
+        # View allotments for specific clan (where they are DESTINATION)
+        # ... logic mainly similar ...
         season = await cwl_models.get_active_season()
-        clans = await mongo_manager.get_clans()
+        if not season: return
         
-        # User selection logic (omitted for brevity, assume they pick a clan they rep)
-        # For now, show Select Menu of all clans they have access to.
-        # ...
-        
-        # Just creating the View directly as this file is getting long.
+        # Select Clan
+        clans = await mongo_manager.get_clans() + await cwl_models.get_shell_clans()
         view = PostClanSelectView(clans, season['season'])
         await interaction.response.send_message("Select Clan:", view=view, ephemeral=True)
-
-    @post_group.command(name="my-overflows", description="Manage/Swap my overflowing players (Reps)")
-    async def my_overflows(self, interaction: discord.Interaction):
-        season = await cwl_models.get_active_season()
-        if not season: 
-            await interaction.response.send_message("No active season.", ephemeral=True)
-            return
-        
-        await interaction.response.send_modal(RepSwapModal(season['season']))
-
-class PostClanSelectView(discord.ui.View):
-    def __init__(self, clans, season):
-        super().__init__()
-        options = [discord.SelectOption(label=c['name'], value=c['clan_tag']) for c in clans[:25]]
-        self.add_item(PostClanSelect(options, season))
 
 class PostClanSelect(discord.ui.Select):
     def __init__(self, options, season):
         super().__init__(placeholder="Select Clan", options=options); self.season=season
     async def callback(self, i):
-        # Post Details
-        # Query Overflows where allotted_to = values[0]
         clan_tag = self.values[0]
-        incoming = await cwl_models.get_overflows(self.season) # get all, filter by allotted_to
-        # Optimization: Add db index or query param. cwl_models updated to support querying?
-        # Current cwl_models.get_overflows supports source_clan. Need allotted_to support.
-        # Improvise: Get all and filter py-side or update model. 
-        # Updating model is best but I can just filter list.
-        my_incoming = [x for x in incoming if x.get('allotted_to_tag') == clan_tag]
         
-        # Sort by TH
+        # We need FINALIZED allotments.
+        # Check Pending table if status=approved? And also raw Overflows (legacy assignment?)
+        # Let's check Overflows where status='allotted' and dest=clan_tag
+        incoming = await cwl_models.get_overflows(self.season) 
+        my_incoming = [x for x in incoming if x.get('allotted_to_tag') == clan_tag and x.get('status') == 'allotted']
+        
+        if not my_incoming:
+             await i.response.send_message("No confirmed incoming players found.", ephemeral=True)
+             return
+             
         my_incoming.sort(key=lambda x: x['player_th'], reverse=True)
-        
-        # Get Clan Name
         clan_name = next(opt.label for opt in self.options if opt.value == clan_tag)
         
-        output = f"**{clan_name.upper()} CWL TRANSACTION LIST** :\n\n"
+        output = f"**CWL ROSTER ADDITIONS: {clan_name.upper()}**\n\n"
         for p in my_incoming:
-            output += f"{p['player_name']} (TH{p['player_th']})\n"
-        
+            # Generate Link
+            link = f"https://link.clashofclans.com/en?action=OpenPlayerProfile&tag={p['player_tag'].replace('#','')}"
+            output += f"• **{p['player_name']}** (TH{p['player_th']})\n   🔗 [Open Profile]({link})\n"
+            
         await i.channel.send(output)
         await i.response.send_message("✅ Posted.", ephemeral=True)
 
