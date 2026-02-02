@@ -359,6 +359,7 @@ class AllotPlayerSelect(discord.ui.Select):
             
         await i.response.send_message(f"✅ Saved {len(tags)} players for this slot. Don't forget to Submit when done.", ephemeral=True)
 
+class CWLForumClanSelectView(discord.ui.View):
     def __init__(self, clans, season):
         super().__init__()
         options = [discord.SelectOption(label=c['name'], value=c['clan_tag']) for c in clans[:25]]

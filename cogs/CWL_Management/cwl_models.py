@@ -210,6 +210,50 @@ class CWLModels:
         cursor = db.find({})
         return [doc async for doc in cursor]
 
+    # --- DISTRIBUTED ALLOCATIONS (Slot Based) ---
+    @staticmethod
+    async def add_pending_allocation(season, source_clan, target_clan, th, count):
+        db = await mongo_manager.get_collection("cwl_pending_allocations")
+        await db.update_one(
+            {"season": season, "source_clan": source_clan, "target_clan": target_clan, "th_level": th},
+            {"$set": {
+                "count_assigned": count, 
+                "count_filled": 0,
+                "status": "pending", # pending -> filled -> approved
+                "players": [] # List of tags selected by leader
+            }},
+            upsert=True
+        )
+
+    @staticmethod
+    async def get_pending_allocations(season, source_clan=None, target_clan=None):
+        db = await mongo_manager.get_collection("cwl_pending_allocations")
+        q = {"season": season}
+        if source_clan: q["source_clan"] = source_clan
+        if target_clan: q["target_clan"] = target_clan
+        cursor = db.find(q)
+        return [doc async for doc in cursor]
+
+    @staticmethod
+    async def update_pending_players(season, source_clan, target_clan, th, player_tags):
+        db = await mongo_manager.get_collection("cwl_pending_allocations")
+        await db.update_one(
+            {"season": season, "source_clan": source_clan, "target_clan": target_clan, "th_level": th},
+            {"$set": {
+                "players": player_tags,
+                "count_filled": len(player_tags),
+                "status": "filled"
+            }}
+        )
+
+    @staticmethod
+    async def approve_allocation(season, source_clan, target_clan, th):
+        db = await mongo_manager.get_collection("cwl_pending_allocations")
+        await db.update_one(
+            {"season": season, "source_clan": source_clan, "target_clan": target_clan, "th_level": th},
+            {"$set": {"status": "approved"}}
+        )
+
 cwl_models = CWLModels()
 
 async def setup(bot):
