@@ -229,13 +229,40 @@ class CWLForumCog(commands.Cog):
         return embed
 
     async def refresh_wizard(self, interaction, data):
-        # Refresh the latest "Wizard" message? 
-        # Or just send a new one logic?
-        # "just guide them how to set their cwl wizard... can use command to change and then again wizard to see updated"
-        # So we don't auto-update a specific message ID, but user can run /cwl wizard to see latest.
-        # But user said "live updating fix that".
-        # If we want live update, we must track the message ID.
+        # ... existing comment ...
         pass
+        
+    async def tag_entry_loop(self, bot, channel, data, th):
+        await channel.send(f"**Adding TH{th} Overflows**. Enter Player Tags (one per line). Type `stop` to finish.")
+        
+        while True:
+            def check(m): return m.channel.id == channel.id and not m.author.bot
+            try:
+                msg = await bot.wait_for('message', check=check, timeout=120)
+                content = msg.content.strip()
+                if content.lower() == "stop":
+                    await channel.send("Stopped.")
+                    break
+                
+                tag = content.upper().replace("#", "")
+                
+                # API Check
+                player = await coc_api.get_player(tag)
+                if not player:
+                    await channel.send("❌ Invalid Tag.")
+                    continue
+                
+                if player.town_hall != th:
+                    await channel.send(f"⚠️ Player is TH{player.town_hall}, expected TH{th}. Added anyway.")
+                    
+                await cwl_models.add_overflow(data['season'], data['clan_tag'], player.tag, player.name, player.town_hall)
+                await channel.send(f"✅ Added {player.name}")
+                try: await msg.delete() 
+                except: pass
+                
+            except asyncio.TimeoutError:
+                await channel.send("Timed out.")
+                break
         
     # --- 6. ALLOTMENT FULFILLMENT (Leader Side) ---
     @cwl_group.command(name="allotment", description="View & Fill Pending Allocations")

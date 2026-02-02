@@ -64,7 +64,11 @@ class AdminPanelView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     
     @discord.ui.button(label="Season Setup", style=discord.ButtonStyle.primary, row=0)
-    async def season(self, i, b): await i.response.send_modal(SeasonModal())
+    async def season(self, i, b):
+        if not cwl_permissions.is_owner(i):
+            await i.response.send_message("❌ Owner Only.", ephemeral=True)
+            return
+        await i.response.send_modal(SeasonModal())
 
     @discord.ui.button(label="Allocations / Allotments", style=discord.ButtonStyle.success, row=1)
     async def allotments(self, i, b):
