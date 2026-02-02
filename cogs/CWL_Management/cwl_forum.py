@@ -84,7 +84,8 @@ class CWLForumClanSelect(discord.ui.Select):
             role = guild.get_role(int(clan_data['leadership_role_id']))
             if role: overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
             
-        return await guild.create_text_channel(channel_name, overwrites=overwrites)
+        category = guild.get_channel(1467896783412920506)
+        return await guild.create_text_channel(channel_name, overwrites=overwrites, category=category)
 
     async def start_wizard(self, channel, season, clan_tag, clan_name):
         embed = discord.Embed(title=f"CWL Wizard: {clan_name}", description=f"Season: **{season}**", color=discord.Color.gold())
