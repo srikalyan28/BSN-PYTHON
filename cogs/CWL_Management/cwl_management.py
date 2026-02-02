@@ -60,10 +60,7 @@ class CWLManagementCog(commands.Cog):
         await i.response.send_message("✅ Removed Manager", ephemeral=True)
 
 
-class AdminPanelView(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    
-    @discord.ui.button(label="Season Setup", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="⚠️ Reset Season", style=discord.ButtonStyle.danger, row=0)
     async def season(self, i, b):
         if not cwl_permissions.is_owner(i):
             await i.response.send_message("❌ Owner Only.", ephemeral=True)
