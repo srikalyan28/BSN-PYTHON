@@ -211,9 +211,9 @@ class OverflowCountModal(discord.ui.Modal):
              
         # All counts collected. Start Tag Entry Loop.
         await interaction.response.send_message("✅ Counts recorded. Starting Tag Entry...", ephemeral=True)
-        asyncio.create_task(self.start_tag_entry(interaction.channel, counts))
+        asyncio.create_task(self.start_tag_entry(interaction.client, interaction.channel, counts))
 
-    async def start_tag_entry(self, channel, counts):
+    async def start_tag_entry(self, bot, channel, counts):
         # Iterate High to Low TH
         for th in sorted(counts.keys(), reverse=True):
             count = counts[th]
@@ -227,7 +227,7 @@ class OverflowCountModal(discord.ui.Modal):
                 while not valid:
                     def check(m): return m.channel.id == channel.id and not m.author.bot
                     try:
-                        msg = await channel.client.wait_for('message', check=check, timeout=120)
+                        msg = await bot.wait_for('message', check=check, timeout=120)
                         tag = msg.content.upper().replace("#", "")
                         if not tag: continue
                         
@@ -240,7 +240,7 @@ class OverflowCountModal(discord.ui.Modal):
                         # Validate TH
                         if player.town_hall != th:
                              await channel.send(f"⚠️ Warning: Player is TH{player.town_hall}, but you are filling TH{th} slot. Proceed? (yes/no)")
-                             conf = await channel.client.wait_for('message', check=check, timeout=30)
+                             conf = await bot.wait_for('message', check=check, timeout=30)
                              if conf.content.lower() != "yes":
                                  await channel.send("Cancelled. Enter correct tag:")
                                  continue
