@@ -126,6 +126,53 @@ class AdminPanelView(discord.ui.View):
         
         await interaction.followup.send(f"✅ Notifications sent to {count} clans.", ephemeral=True)
 
+    @discord.ui.button(label="Review Submissions", style=discord.ButtonStyle.primary, row=2)
+    async def review(self, interaction: discord.Interaction, button: discord.ui.Button):
+        season = await cwl_models.get_active_season()
+        if not season: return
+        
+        # Get 'filled' allocations (Leaders submitted)
+        all_pending = await cwl_models.get_pending_allocations(season['season'])
+        filled = [p for p in all_pending if p.get('status') == 'filled']
+        
+        if not filled:
+            await interaction.response.send_message("No submissions waiting for review.", ephemeral=True)
+            return
+            
+        view = ReviewSubmissionsView(season['season'], filled)
+        await interaction.response.send_message(f"found {len(filled)} submissions to review.", view=view, ephemeral=True)
+
+class ReviewSubmissionsView(discord.ui.View):
+    def __init__(self, season, items):
+        super().__init__()
+        for p in items:
+            self.add_item(ReviewButton(season, p))
+
+class ReviewButton(discord.ui.Button):
+    def __init__(self, season, alloc):
+        label = f"{alloc['source_clan']} -> {alloc['target_clan']} (TH{alloc['th_level']})"
+        super().__init__(label=label, style=discord.ButtonStyle.success)
+        self.season = season; self.alloc = alloc
+    
+    async def callback(self, i):
+        # Approve
+        # 1. Update Pending Status -> approved
+        await cwl_models.approve_allocation(self.season, self.alloc['source_clan'], self.alloc['target_clan'], self.alloc['th_level'])
+        
+        # 2. Update Overflows (reserved -> allotted)
+        tags = self.alloc.get('players', [])
+        for tag in tags:
+            await cwl_models.update_overflow_status(self.season, tag, "allotted", allotted_to_tag=self.alloc['target_clan'])
+            
+        # 3. Update Requirements (Count Allotted)
+        # Note: We already incremented 'count_allotted' in requirements when we assigned the SLOT.
+        # So we don't need to increment again.
+        
+        self.disabled = True
+        self.label += " (Approved)"
+        await i.response.edit_message(view=self.view)
+        await i.followup.send(f"✅ Approved move of {len(tags)} players.", ephemeral=True)
+
 
 
 class SeasonModal(discord.ui.Modal, title="Set Season"):
