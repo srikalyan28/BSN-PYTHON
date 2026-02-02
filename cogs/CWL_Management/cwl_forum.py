@@ -63,8 +63,8 @@ class CWLForumCog(commands.Cog):
     @cwl_group.command(name="set-goal", description="Set CWL Goal")
     @app_commands.choices(goal=[
         app_commands.Choice(name="Promote", value="Promote"),
-        app_commands.Choice(name="Hold", value="Hold"),
-        app_commands.Choice(name="Relaxed/Farm", value="Relaxed")
+        app_commands.Choice(name="Hold League", value="Hold League"),
+        app_commands.Choice(name="Skip CWL", value="Skip CWL")
     ])
     async def set_goal(self, interaction: discord.Interaction, goal: app_commands.Choice[str]):
         data = await self.validate_channel(interaction)
@@ -404,9 +404,25 @@ class CWLForumClanSelect(discord.ui.Select):
         channel = await self.ensure_channel(interaction.guild, clan_data, interaction.user)
         
         # LINK CHANNEL ID to FORUM Metadata
+        # LINK CHANNEL ID to FORUM Metadata
         await cwl_models.save_forum_metadata(self.season, clan_tag, {"channel_id": channel.id})
+
+        # INSTRUCTION EMBED
+        embed = discord.Embed(
+            title=f"🛡️ CWL Management: {clan_data['name']}",
+            description=f"Welcome to the **{self.season}** CWL Forum.\nUse this channel to manage your roster, requests, and allocations.",
+            color=discord.Color.gold()
+        )
+        embed.add_field(name="1️⃣ Setup", value="Run `/cwl wizard` to see your status board.\nUse `/cwl set-goal`, `/cwl set-format` to configure.", inline=False)
+        embed.add_field(name="2️⃣ Overflows", value="Use `/cwl overflow add [TH]` to input players you can't roster.", inline=False)
+        embed.add_field(name="3️⃣ Submission", value="When ready, use `/cwl submit` to notify admins.", inline=False)
         
-        await interaction.response.send_message(f"✅ Linked & Created {channel.mention}.\nGo there and run `/cwl wizard` to start.", ephemeral=True)
+        # Ping Leadership
+        role_id = clan_data.get('leadership_role_id')
+        ping = f"<@&{role_id}>" if role_id else ""
+        
+        await channel.send(content=f"{ping} **Channel Created!**", embed=embed)
+        await interaction.response.send_message(f"✅ Linked & Created {channel.mention}.", ephemeral=True)
 
     async def ensure_channel(self, guild, clan_data, user):
         # (Same logic as before)

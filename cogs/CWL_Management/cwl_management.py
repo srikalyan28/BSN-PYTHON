@@ -86,21 +86,6 @@ class AdminPanelView(discord.ui.View):
         view = ConfirmResetView(season['season'])
         await i.response.send_message(f"⚠️ **DANGER**: This will DELETE all stats/allocations/overflows for **{season['season']}**.\nAre you sure?", view=view, ephemeral=True)
 
-class ConfirmResetView(discord.ui.View):
-    def __init__(self, season):
-        super().__init__()
-        self.season = season
-        
-    @discord.ui.button(label="CONFIRM RESET", style=discord.ButtonStyle.danger)
-    async def confirm(self, i, b):
-        await cwl_models.reset_season_data(self.season)
-        await i.response.edit_message(content=f"✅ Data cleared for **{self.season}**.", view=None)
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, i, b):
-        await i.response.edit_message(content="Cancelled.", view=None)
-
-
     @discord.ui.button(label="Allocations / Allotments", style=discord.ButtonStyle.success, row=1)
     async def allotments(self, i, b):
         season = await cwl_models.get_active_season()
@@ -177,7 +162,22 @@ class ConfirmResetView(discord.ui.View):
         view = ReviewSubmissionsView(season['season'], filled)
         await interaction.response.send_message(f"found {len(filled)} submissions to review.", view=view, ephemeral=True)
 
+class ConfirmResetView(discord.ui.View):
+    def __init__(self, season):
+        super().__init__()
+        self.season = season
+        
+    @discord.ui.button(label="CONFIRM RESET", style=discord.ButtonStyle.danger)
+    async def confirm(self, i, b):
+        await cwl_models.reset_season_data(self.season)
+        await i.response.edit_message(content=f"✅ Data cleared for **{self.season}**.", view=None)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, i, b):
+        await i.response.edit_message(content="Cancelled.", view=None)
+
 class ReviewSubmissionsView(discord.ui.View):
+
     def __init__(self, season, items):
         super().__init__()
         for p in items:
