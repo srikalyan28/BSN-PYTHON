@@ -267,11 +267,12 @@ class OurClansCog(commands.Cog):
         # Author: Name (Tag)
         embed.set_author(name=f"{name} ({tag})", icon_url=badge_url)
         
-        # Thumbnail: Custom Logo replaces Badge if present, else Badge
-        # User requested footer image at bottom. Only way is set_image via footer. 
-        # So Custom Logo moves to Thumbnail to stay visible.
-        thumb_url = custom_logo if custom_logo else badge_url
-        embed.set_thumbnail(url=thumb_url)
+        # Thumbnail: Badge (always small)
+        embed.set_thumbnail(url=badge_url)
+        
+        # If custom logo exists, show it as a big image
+        if custom_logo:
+            embed.set_image(url=custom_logo)
         
         # Main Stats Block
         stats_lines = []
@@ -347,11 +348,12 @@ class OurClansCog(commands.Cog):
         if leaders_note:
             embed.add_field(name="Leader's Note", value=leaders_note, inline=False)
 
-        # Footer Image as Main Image
-        embed.set_image(url=f"attachment://{footer_file}")
-        embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        # Second Embed for Footer Image (to allow logo to be big in first embed)
+        footer_embed = discord.Embed(color=embed_color)
+        footer_embed.set_image(url=f"attachment://{footer_file}")
+        footer_embed.set_footer(text=f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         
-        return [embed], file
+        return [embed, footer_embed], file
 
     @tasks.loop(hours=1)
     async def update_clans_task(self):

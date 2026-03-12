@@ -313,26 +313,29 @@ async def collect_clan_details(interaction, clan_type, min_th):
         return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
 
     try:
-        # 1. Name
-        await interaction.followup.send("Please enter the **Clan Name**:", ephemeral=True)
+        # 1. Tag (Was Name)
+        await interaction.followup.send("Please enter the **Clan Tag**:", ephemeral=True)
         msg = await interaction.client.wait_for('message', check=check, timeout=60)
-        name = msg.content
-        await msg.delete() # Clean up user input if possible
-
-        # 2. Tag
-        await interaction.followup.send(f"Great! Enter the **Clan Tag** for {name}:", ephemeral=True)
-        msg = await interaction.client.wait_for('message', check=check, timeout=60)
-        tag = msg.content.upper()
+        tag = msg.content.upper().replace('#', '').strip()
+        tag = f"#{tag}"
         await msg.delete()
 
-        # 3. Abbreviation (New)
-        await interaction.followup.send("Enter **Clan Abbreviation** (e.g. ICL, DB):", ephemeral=True)
+        # Fetch details from CoC API early to get the name
+        clan_details = await coc_api.get_clan(tag)
+        if not clan_details:
+            await interaction.followup.send(f"❌ Could not find clan with tag `{tag}` in game. Aborting.", ephemeral=True)
+            return
+            
+        name = clan_details.name
+
+        # 2. Confirm Name & Abbreviation
+        await interaction.followup.send(f"Found **{name}** in game! Now, enter the **Clan Abbreviation** (e.g. ICL, DB):", ephemeral=True)
         msg = await interaction.client.wait_for('message', check=check, timeout=60)
         abbreviation = msg.content.upper()
         await msg.delete()
 
         # 3. Link
-        await interaction.followup.send("Paste the **Clan Link** (from Clash of Clans):", ephemeral=True)
+        await interaction.followup.send(f"Paste the **Clan Link** for {name}:", ephemeral=True)
         msg = await interaction.client.wait_for('message', check=check, timeout=60)
         link = msg.content
         await msg.delete()
@@ -408,11 +411,8 @@ async def collect_clan_details(interaction, clan_type, min_th):
             clan_role_id = msg.role_mentions[0].id if msg.role_mentions else (msg.content if msg.content.isdigit() else None)
             await msg.delete()
 
-        # 7. Leadership Channel (New)
-        await interaction.followup.send("Mention the **Leadership Chat Channel** (e.g. #leaders-chat):", ephemeral=True)
-        msg = await interaction.client.wait_for('message', check=check, timeout=60)
-        leadership_channel_id = msg.channel_mentions[0].id if msg.channel_mentions else (msg.content if msg.content.isdigit() else None)
-        await msg.delete()
+        # 7. Removed Leadership Channel Step (per user request)
+        leadership_channel_id = None
 
         # Fetch additional details from CoC API
         clan_details = await coc_api.get_clan(tag)
