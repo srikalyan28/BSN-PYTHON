@@ -152,9 +152,8 @@ class OurClansCog(commands.Cog):
         leaders_note = clan.get('leaders_note', '')
         
         
-        # Save League, Min TH, CH Level to DB for Dropdown usage
+        # Save League, CH Level to DB for Dropdown usage
         war_league_name = details.war_league.name if details.war_league else "Unranked"
-        min_th = details.required_townhall
         
         # CH Level Logic
         ch_level = "0"
@@ -168,7 +167,6 @@ class OurClansCog(commands.Cog):
                      break
 
         await mongo_manager.update_clan_field(clan['clan_tag'], "war_league", war_league_name)
-        await mongo_manager.update_clan_field(clan['clan_tag'], "min_th", min_th)
         await mongo_manager.update_clan_field(clan['clan_tag'], "ch_level", ch_level)
         
         # Images
