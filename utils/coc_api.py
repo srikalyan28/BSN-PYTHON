@@ -12,6 +12,18 @@ class CoCClient:
 
     async def ensure_login(self):
         if not self._is_logged_in:
+            email = os.getenv("COC_EMAIL")
+            password = os.getenv("COC_PASSWORD")
+
+            if email and password:
+                try:
+                    await self.client.login(email, password)
+                    self._is_logged_in = True
+                    print("Logged in to CoC API via Email/Password (handles IP changes automatically)")
+                    return
+                except Exception as e:
+                    print(f"Failed to login to CoC API via Email/Password: {e}")
+
             if not self.token:
                 self.token = os.getenv("COC_API_TOKEN")
             
@@ -19,13 +31,13 @@ class CoCClient:
                 try:
                     await self.client.login_with_tokens(self.token.strip())
                     self._is_logged_in = True
-                    print("Logged in to CoC API via coc.py")
+                    print("Logged in to CoC API via static token")
                 except coc.InvalidCredentials:
                     print("Invalid CoC API Token.")
                 except Exception as e:
-                    print(f"Failed to login to CoC API: {e}")
+                    print(f"Failed to login to CoC API via token: {e}")
             else:
-                print("No CoC API Token found.")
+                print("No CoC API Token or Email/Password found.")
 
     async def get_player(self, tag):
         await self.ensure_login()
